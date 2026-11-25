@@ -225,7 +225,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
     html: {
       'hero.title': 'KuroCat · 敲键盘的小黑猫<br /><span>住进你的桌面</span>',
       'hero.sub':
-        '基于 <strong>Tauri v2 + Rust 原生钩子 + Three.js 3D / Canvas 2D 双引擎</strong> 打造的透明置顶桌面键鼠伴侣。默认 <strong>✨ 3D 体积光影手办模式</strong>（右键双标签页免滚动菜单一键切换 <strong>2D 经典手绘</strong>），安装包仅 <strong>2.16 MB</strong>；v5.1.0 重构 GPU 渲染合批与<strong>游戏自动 30 FPS 省电模式</strong>（活跃 GPU 最高降 88%），内置 <strong>6 款猫咪 + 🐳 大肥鱼</strong>、<strong>游戏自动戴电竞耳机</strong>、<strong>3D 项圈铃铛</strong>、<strong>重启记住鼠标穿透</strong>、<strong>OBS 免抠像直播源</strong>、<strong>密码闭眼防偷窥</strong>、<strong>国内直连秒速更新</strong> 与 <strong>MCP 协议 AI 捏猫</strong>。',
+        '基于 <strong>Tauri v2 + Rust 原生钩子 + Three.js 3D / Canvas 2D 双引擎</strong> 打造的透明置顶桌面键鼠伴侣。默认 <strong>✨ 3D 体积光影手办模式</strong>（右键双标签页免滚动菜单一键切换 <strong>2D 经典手绘</strong>），安装包仅 <strong>2.16 MB</strong>；v5.1.1 重构 GPU 渲染合批与<strong>游戏自动 30 FPS 省电模式</strong>（活跃 GPU 最高降 88%），内置 <strong>6 款猫咪 + 🐳 大肥鱼</strong>、<strong>游戏自动戴电竞耳机</strong>、<strong>3D 项圈铃铛</strong>、<strong>重启记住鼠标穿透</strong>、<strong>OBS 免抠像直播源</strong>、<strong>密码闭眼防偷窥</strong>、<strong>国内直连秒速更新</strong> 与 <strong>MCP 协议 AI 捏猫</strong>。',
       'dl.sub':
         '所有安装包均内置 <strong>20%–150% 无级缩放</strong>、<strong>65% / 108 键随时切换</strong>、<strong>自定义尾巴拍键</strong> 与 <strong>App 内自动更新</strong>。<br />默认提供 <code>qianyi.one</code> 国内高速直链，同时保留 GitHub Releases 官方原链与 SHA-256 校验。',
       'dl.winDesc':
@@ -507,7 +507,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
     html: {
       'hero.title': 'KuroCat — A Typing Black Cat<br /><span>Living on Your Desktop</span>',
       'hero.sub':
-        'Built with <strong>Tauri v2 + native Rust hooks + Three.js 3D / Canvas 2D dual engine</strong> as a transparent, always-on-top desk companion. Defaults to <strong>✨ 3D Volumetric Figurine</strong> (two-tab zero-scroll menu to switch <strong>2D Classic</strong>), only <strong>2.16 MB</strong> installer; v5.1.0 introduces instanced GPU batching &amp; <strong>auto 30 FPS Game Eco Mode</strong> (up to 88% lower active GPU), <strong>6 cats + 🐳 BigFish</strong>, <strong>auto-equip gaming headset</strong>, <strong>3D collar bells</strong>, <strong>persistent click-through lock</strong>, <strong>OBS transparent source</strong>, <strong>password privacy guard</strong>, <strong>fast CDN auto-updates</strong>, and <strong>MCP AI cat studio</strong>.',
+        'Built with <strong>Tauri v2 + native Rust hooks + Three.js 3D / Canvas 2D dual engine</strong> as a transparent, always-on-top desk companion. Defaults to <strong>✨ 3D Volumetric Figurine</strong> (two-tab zero-scroll menu to switch <strong>2D Classic</strong>), only <strong>2.16 MB</strong> installer; v5.1.1 introduces instanced GPU batching &amp; <strong>auto 30 FPS Game Eco Mode</strong> (up to 88% lower active GPU), <strong>6 cats + 🐳 BigFish</strong>, <strong>auto-equip gaming headset</strong>, <strong>3D collar bells</strong>, <strong>persistent click-through lock</strong>, <strong>OBS transparent source</strong>, <strong>password privacy guard</strong>, <strong>fast CDN auto-updates</strong>, and <strong>MCP AI cat studio</strong>.',
       'dl.sub':
         'Every build includes <strong>20%–150% smooth scaling</strong>, <strong>65% / 108-key switching</strong>, <strong>customizable tail keys</strong>, and <strong>in-app auto-updates</strong>.<br />Fast CDN mirrors on <code>qianyi.one</code> alongside official GitHub Releases with SHA-256 verification.',
       'dl.winDesc':
@@ -789,7 +789,7 @@ export const KUROCAT_I18N: Record<Locale, KuroCatI18nBundle> = {
     html: {
       'hero.title': 'KuroCat · キーボードを叩く黒猫が<br /><span>あなたのデスクトップに</span>',
       'hero.sub':
-        '<strong>Tauri v2 + Rust ネイティブフック + Three.js 3D / Canvas 2D デュアルエンジン</strong> で開発した透過・最前面デスクトップペット。初期設定の <strong>✨ 3D フィギュアモード</strong> と <strong>2D クラシック手描き</strong> を 2 タブ式メニューで切替でき、インストーラーはわずか <strong>2.16 MB</strong>。v5.1.0 では GPU インスタンス描画と <strong>ゲーム自動 30 FPS 省電力</strong>（最大 88% 削減）、<strong>猫 6 種 + 🐳 クジラ娘</strong>、<strong>ゲーム自動ヘッドセット</strong>、<strong>3D 首輪ベル</strong>、<strong>透過ロック記憶</strong>、<strong>OBS 透過ソース</strong>、<strong>パスワード自動保護</strong>、<strong>高速 CDN 自動更新</strong>、<strong>MCP AI カスタム猫</strong> を標準搭載。',
+        '<strong>Tauri v2 + Rust ネイティブフック + Three.js 3D / Canvas 2D デュアルエンジン</strong> で開発した透過・最前面デスクトップペット。初期設定の <strong>✨ 3D フィギュアモード</strong> と <strong>2D クラシック手描き</strong> を 2 タブ式メニューで切替でき、インストーラーはわずか <strong>2.16 MB</strong>。v5.1.1 では GPU インスタンス描画と <strong>ゲーム自動 30 FPS 省電力</strong>（最大 88% 削減）、<strong>猫 6 種 + 🐳 クジラ娘</strong>、<strong>ゲーム自動ヘッドセット</strong>、<strong>3D 首輪ベル</strong>、<strong>透過ロック記憶</strong>、<strong>OBS 透過ソース</strong>、<strong>パスワード自動保護</strong>、<strong>高速 CDN 自動更新</strong>、<strong>MCP AI カスタム猫</strong> を標準搭載。',
       'dl.sub':
         '全パッケージに <strong>20%–150% 無段階ズーム</strong>・<strong>65% / 108 キー切替</strong>・<strong>しっぽキー選択</strong>・<strong>アプリ内自動更新</strong> を内蔵。<br /><code>qianyi.one</code> 高速ミラーと GitHub Releases 公式リンク（SHA-256 検証対応）を用意しています。',
       'dl.winDesc':

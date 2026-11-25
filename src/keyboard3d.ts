@@ -279,9 +279,9 @@ const keyAtlasCache = new Map<string, KeyAtlasData>();
 const miscTextureCache = new Map<string, THREE.CanvasTexture>();
 
 /**
- * Packs all unique keycap legends for a layout + orientation into ONE single crisp power-of-2
- * CanvasTexture atlas (128x128 per tile with 2px inner bleed padding), collapsing 67-108 separate
- * keycap textures and 201-324 draw calls into just 2 InstancedMesh draw calls total!
+ * Packs all unique keycap legends for a layout + orientation into ONE compact CanvasTexture atlas
+ * (96x96 per tile, linear-filtered without mipmaps -> ~4 MB VRAM instead of ~38 MB!), collapsing
+ * 67-108 separate keycap textures and 201-324 draw calls into just 2 InstancedMesh draw calls total!
  */
 function getKeycapAtlas(
   layoutId: KeyboardLayoutId,
@@ -291,6 +291,14 @@ function getKeycapAtlas(
   const cacheKey = `${layoutId}|${rotated180 ? 1 : 0}`;
   const cached = keyAtlasCache.get(cacheKey);
   if (cached) return cached;
+
+  // Evict previously cached layout atlases so switching 65%/108% never leaks GPU VRAM!
+  for (const [oldKey, oldEntry] of keyAtlasCache) {
+    if (oldKey !== cacheKey) {
+      oldEntry.tex.dispose();
+      keyAtlasCache.delete(oldKey);
+    }
+  }
 
   const unique: Array<{ key: string; label: string; accent: 'base' | 'mod' | 'orange' }> = [];
   const seen = new Set<string>();
@@ -305,16 +313,16 @@ function getKeycapAtlas(
     }
   }
 
-  // Place orange accent tiles on their own isolated bottom row so mipmaps NEVER bleed orange onto cream keys!
+  // Place orange accent tiles on their own isolated bottom row so filtering never bleeds onto cream keys!
   const nonOrange = unique.filter((u) => u.accent !== 'orange');
   const orangeOnly = unique.filter((u) => u.accent === 'orange');
 
-  const CELL = 128;
-  const cols = nonOrange.length <= 56 ? 8 : 16;
+  const CELL = 96;
+  const cols = nonOrange.length <= 56 ? 8 : 12;
   const nonOrangeRows = Math.ceil(nonOrange.length / cols);
-  const totalRows = nonOrangeRows + (orangeOnly.length > 0 ? 1 : 0);
+  const totalRows = Math.max(1, nonOrangeRows + (orangeOnly.length > 0 ? 1 : 0));
   const atlasW = cols * CELL;
-  const atlasH = totalRows <= 8 ? 1024 : 2048;
+  const atlasH = totalRows * CELL;
 
   const c = document.createElement('canvas');
   c.width = atlasW;
@@ -324,7 +332,7 @@ function getKeycapAtlas(
   g.fillRect(0, 0, atlasW, atlasH);
 
   const rects = new Map<string, [number, number, number, number]>();
-  const PAD = 10.0;
+  const PAD = 7.5;
 
   const paintTile = (
     item: { key: string; label: string; accent: 'base' | 'mod' | 'orange' },
@@ -350,12 +358,12 @@ function getKeycapAtlas(
       g.translate(ox + CELL * 0.5, oy + CELL * 0.5);
       if (rotated180) g.rotate(Math.PI);
       const len = item.label.length;
-      const fontSize = len >= 4 ? 29 : len === 3 ? 35 : len === 2 ? 42 : 52;
+      const fontSize = len >= 4 ? 22 : len === 3 ? 26 : len === 2 ? 32 : 39;
       g.font = `700 ${fontSize}px "Segoe UI", system-ui, sans-serif`;
       g.fillStyle = item.accent === 'orange' ? '#ffffff' : '#2b2d34';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(item.label, 0, 2);
+      g.fillText(item.label, 0, 1.5);
       g.restore();
     }
 
@@ -371,8 +379,7 @@ function getKeycapAtlas(
     paintTile(nonOrange[i], i % cols, Math.floor(i / cols));
   }
   if (orangeOnly.length > 0) {
-    // Place orange tiles on the bottom-most atlas row for a full-row mipmap buffer + 10px per-tile padding!
-    const orangeRow = Math.floor(atlasH / CELL) - 1;
+    const orangeRow = totalRows - 1;
     g.fillStyle = '#f59b2e';
     g.fillRect(0, orangeRow * CELL, atlasW, CELL);
     for (let i = 0; i < orangeOnly.length; i++) {
@@ -381,12 +388,25 @@ function getKeycapAtlas(
   }
 
   const tex = new THREE.CanvasTexture(c);
-  tex.anisotropy = 4;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   const entry: KeyAtlasData = { tex, rects };
   keyAtlasCache.set(cacheKey, entry);
   return entry;
+}
+
+export function disposeKeyboardCaches(): void {
+  for (const entry of keyAtlasCache.values()) {
+    entry.tex.dispose();
+  }
+  keyAtlasCache.clear();
+  for (const tex of miscTextureCache.values()) {
+    tex.dispose();
+  }
+  miscTextureCache.clear();
 }
 
 function makeSoftShadowTexture(): THREE.CanvasTexture {
@@ -1104,5 +1124,28 @@ export class KeyboardAndMouse3D {
 
     const anyPress = Math.max(this.leftPress, this.rightPress);
     this.mouseShape.scale.set(1 + 0.03 * anyPress, 1 - 0.10 * anyPress, 1);
+  }
+
+  public dispose(): void {
+    this.deskGroup.traverse((obj: THREE.Object3D) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material;
+      if (Array.isArray(mat)) {
+        for (const m of mat) m.dispose();
+      } else if (mat) {
+        mat.dispose();
+      }
+    });
+    for (const d of this.boardDisposables) {
+      d.dispose();
+    }
+    this.boardDisposables.length = 0;
+    this.capSideGeo.dispose();
+    this.capTopBaseGeo.dispose();
+    this.capSideMat.dispose();
+    this.chassisMat.dispose();
+    this.kbShadowMat.dispose();
+    disposeKeyboardCaches();
   }
 }

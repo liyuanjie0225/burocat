@@ -18,9 +18,9 @@ import {
 import { keyboardEventToVk } from './webKeyMap';
 import type { CollarColorId, KuroCatEngine3D } from '../../src/catEngine3d';
 
-const LOCAL_MIRROR_VERSION = 'v5.1.0';
-const LOCAL_MIRROR_VER_NUM = '5.1.0';
-const MACOS_MIRROR_VERSION = 'v5.1.0';
+const LOCAL_MIRROR_VERSION = 'v5.1.1';
+const LOCAL_MIRROR_VER_NUM = '5.1.1';
+const MACOS_MIRROR_VERSION = 'v5.1.1';
 
 let currentLocale: Locale = detectInitialLocale();
 let i18n = KUROCAT_I18N[currentLocale];
@@ -1424,6 +1424,28 @@ function initGrowthChart(): void {
     });
   });
 
+  const syncHeroGrowthMeta = () => {
+    if (!cachedSeries) return;
+    if (typeof cachedSeries.stars === 'number' && cachedSeries.stars > 0) {
+      const stSep = document.getElementById('github-stats-sep');
+      const stTxt = document.getElementById('github-stats-text');
+      if (stSep && stTxt) {
+        stSep.style.display = '';
+        stTxt.style.display = '';
+        stTxt.textContent = `★ ${formatCount(cachedSeries.stars)} Stars`;
+      }
+    }
+    if (typeof cachedSeries.total_downloads === 'number' && cachedSeries.total_downloads > 0) {
+      const dlSep = document.getElementById('site-dl-sep');
+      const dlTxt = document.getElementById('site-dl-text');
+      if (dlSep && dlTxt) {
+        dlSep.style.display = '';
+        dlTxt.style.display = '';
+        dlTxt.textContent = i18n.fmt.totalDownloads(formatCount(cachedSeries.total_downloads));
+      }
+    }
+  };
+
   const refresh = async () => {
     try {
       const res = await fetch('/kurocat/api/growth', { cache: 'no-store' });
@@ -1432,6 +1454,7 @@ function initGrowthChart(): void {
       if (data && Array.isArray(data.points) && data.points.length > 0) {
         cachedSeries = data;
         renderChart();
+        syncHeroGrowthMeta();
       }
     } catch {
       // Keep last rendered chart on transient network errors
@@ -1440,6 +1463,7 @@ function initGrowthChart(): void {
 
   localeListeners.push(() => {
     renderUpdatedText();
+    syncHeroGrowthMeta();
   });
 
   void refresh();

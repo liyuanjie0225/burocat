@@ -1036,6 +1036,12 @@ fn install_macos_update(app: &AppHandle, info: &UpdateInfo) -> Result<(), String
          if mv '{src}' '{dst}'; then \
            rm -rf '{dst}.bak' '{tmp}'; \
            /usr/bin/xattr -dr com.apple.quarantine '{dst}' 2>/dev/null || true; \
+           REQ=$(/usr/bin/codesign -d -r- '{dst}' 2>&1 || true); \
+           if printf '%s' \"$REQ\" | /usr/bin/grep -q 'cdhash' && ! printf '%s' \"$REQ\" | /usr/bin/grep -q 'anchor apple'; then \
+             /usr/bin/tccutil reset Accessibility com.kurocat.pet >/dev/null 2>&1 || true; \
+             /usr/bin/tccutil reset ListenEvent com.kurocat.pet >/dev/null 2>&1 || true; \
+             sleep 0.2; \
+           fi; \
            /usr/bin/open -n '{dst}'; \
          else \
            if [ -d '{dst}.bak' ]; then mv '{dst}.bak' '{dst}'; fi; \

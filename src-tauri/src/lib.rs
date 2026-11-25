@@ -5,6 +5,7 @@ mod agent_status;
 mod cats;
 mod config;
 mod game_detect;
+mod i18n;
 mod input_hook;
 #[cfg(target_os = "macos")]
 mod macos_window;
@@ -28,7 +29,7 @@ use config::{
     try_save_settings, AppSettings,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use tauri::{AppHandle, Emitter, Listener, LogicalSize, Manager, PhysicalPosition, Size, State};
@@ -264,11 +265,78 @@ pub struct AppState {
     pub menu_open: Arc<AtomicBool>,
     tail_picker_bounds: Arc<Mutex<Option<TailPickerBounds>>>,
     pub menu_creating: Arc<AtomicBool>,
+    pub menu_close_gen: Arc<AtomicU64>,
     pub menu_opened_at: Arc<Mutex<Instant>>,
     pub dragging: Arc<AtomicBool>,
     pub mcp_enabled: Arc<AtomicBool>,
     pub update_banner_open: Arc<AtomicBool>,
     pub paused_guard: Arc<AtomicBool>,
+}
+
+/// Shared Chromium / WebView2 lean runtime flags.
+/// IMPORTANT: Must match `src-tauri/tauri.conf.json`'s `additionalBrowserArgs` byte-for-byte;
+/// otherwise Windows WebView2 rejects creating the 2nd ("menu") window with HRESULT 0x8007139F.
+const WEBVIEW_BROWSER_ARGS: &str = "--autoplay-policy=no-user-gesture-required --disable-background-networking --disable-sync --disable-extensions --disable-features=Translate,BackForwardCache,MediaRouter,OptimizationHints --js-flags=--max-old-space-size=96";
+
+const SIDE_MENU_IDLE_DESTROY_SECS: u64 = 25;
+
+fn schedule_side_menu_idle_destroy(app: AppHandle) {
+    let gen = app
+        .state::<AppState>()
+        .menu_close_gen
+        .fetch_add(1, Ordering::AcqRel)
+        + 1;
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(SIDE_MENU_IDLE_DESTROY_SECS));
+        let state = app.state::<AppState>();
+        if state.menu_open.load(Ordering::Acquire)
+            || state.menu_creating.load(Ordering::Acquire)
+            || state.menu_close_gen.load(Ordering::Acquire) != gen
+        {
+            return;
+        }
+        if let Some(menu_win) = app.get_webview_window("menu") {
+            // Fully destroy the hidden 2nd WebView2 renderer process after idle grace period
+            // to reclaim ~35-55 MB RAM while keeping rapid reopen instant inside the window.
+            let _ = menu_win.destroy();
+        }
+    });
+}
+
+#[tauri::command]
+fn get_resolved_locale(state: State<'_, AppState>) -> String {
+    let lang = state.settings.lock().unwrap().language.clone();
+    i18n::effective_locale(&lang).to_string()
+}
+
+#[tauri::command]
+fn trim_idle_memory() {
+    #[cfg(windows)]
+    {
+        static LAST_TRIM_MS: AtomicU64 = AtomicU64::new(0);
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let prev = LAST_TRIM_MS.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(prev) < 45_000 {
+            return;
+        }
+        LAST_TRIM_MS.store(now_ms, Ordering::Relaxed);
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> isize;
+            fn SetProcessWorkingSetSize(
+                h_process: isize,
+                dw_minimum_working_set_size: usize,
+                dw_maximum_working_set_size: usize,
+            ) -> i32;
+        }
+        unsafe {
+            let _ = SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+        }
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -347,14 +415,17 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSet
     patch.render_mode = config::normalize_render_mode(&patch.render_mode);
     patch.collar_color = config::normalize_collar_color(&patch.collar_color);
     patch.headphone_mode = config::normalize_headphone_mode(&patch.headphone_mode);
+    patch.fps_cap = config::normalize_fps_cap(patch.fps_cap);
+    patch.language = config::normalize_language(&patch.language);
 
-    let (prev_autostart, prev_scale, prev_layout, prev_obs_hide) = {
+    let (prev_autostart, prev_scale, prev_layout, prev_obs_hide, prev_language) = {
         let s = state.settings.lock().unwrap();
         (
             s.autostart,
             s.scale,
             s.keyboard_layout.clone(),
             s.obs_enabled && s.obs_hide_pet,
+            s.language.clone(),
         )
     };
     if patch.autostart != prev_autostart {
@@ -406,13 +477,16 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSet
         save_settings(&s);
     }
     let _ = app.emit("kuro-settings", patch.clone());
+    if patch.language != prev_language {
+        tray::refresh_tray_language(&app);
+    }
     if size_changed {
         reposition_context_menu_if_open(&app);
     }
     patch
 }
 
-const SIDE_MENU_LOGICAL_W: f64 = 266.0;
+const SIDE_MENU_LOGICAL_W: f64 = 276.0;
 
 /// Computes a non-overlapping physical position `(mx, my)` for the floating menu popover
 /// beside the cat window: prefers LEFT (since the cat defaults to bottom-right), then RIGHT,
@@ -502,7 +576,7 @@ fn current_pet_rect_and_monitor(app: &AppHandle) -> Option<((i32, i32, i32, i32)
 fn side_menu_geometry(app: &AppHandle) -> Option<(i32, i32, f64, f64)> {
     let (pet_rect, work_area, sf) = current_pet_rect_and_monitor(app)?;
     let mon_logical_h = work_area.3 as f64 / sf.max(0.5);
-    let menu_logical_h = (mon_logical_h - 24.0).clamp(360.0, 648.0);
+    let menu_logical_h = (mon_logical_h - 24.0).clamp(360.0, 686.0);
     let mw = (SIDE_MENU_LOGICAL_W * sf).round() as i32;
     let mh = (menu_logical_h * sf).round() as i32;
     let gap = (10.0 * sf).round() as i32;
@@ -557,6 +631,11 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
         }
     }
 
+    // Cancel any pending idle destroy before reusing or building the side menu.
+    app.state::<AppState>()
+        .menu_close_gen
+        .fetch_add(1, Ordering::AcqRel);
+
     let menu_win = if let Some(existing) = app.get_webview_window("menu") {
         existing
     } else {
@@ -595,7 +674,7 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
             // MUST match `tauri.conf.json` main window's `additionalBrowserArgs` identically;
             // otherwise Windows WebView2 rejects creating a 2nd window in the same userDataFolder
             // with HRESULT 0x8007139F (ERROR_INVALID_STATE)!
-            .additional_browser_args("--autoplay-policy=no-user-gesture-required")
+            .additional_browser_args(WEBVIEW_BROWSER_ARGS)
             .build()
             {
                 Ok(w) => w,
@@ -619,6 +698,7 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
                             let _ = w.hide();
                         }
                         state.menu_open.store(false, Ordering::Relaxed);
+                        schedule_side_menu_idle_destroy(app_ev.clone());
                     }
                 }
                 tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -630,6 +710,7 @@ async fn open_context_menu(app: AppHandle) -> Result<(), String> {
                         .state::<AppState>()
                         .menu_open
                         .store(false, Ordering::Relaxed);
+                    schedule_side_menu_idle_destroy(app_ev.clone());
                 }
                 _ => {}
             });
@@ -658,6 +739,7 @@ fn close_context_menu(app: AppHandle) {
     app.state::<AppState>()
         .menu_open
         .store(false, Ordering::Relaxed);
+    schedule_side_menu_idle_destroy(app);
 }
 
 #[tauri::command]
@@ -2281,6 +2363,7 @@ pub fn run() {
             menu_open,
             tail_picker_bounds: Arc::new(Mutex::new(None)),
             menu_creating,
+            menu_close_gen: Arc::new(AtomicU64::new(0)),
             menu_opened_at,
             dragging,
             mcp_enabled,
@@ -2466,6 +2549,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            get_resolved_locale,
+            trim_idle_memory,
             get_cats,
             get_game_active,
             get_mcp_config,

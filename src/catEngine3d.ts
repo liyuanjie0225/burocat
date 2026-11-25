@@ -145,11 +145,29 @@ function withTowardEye(mat: THREE.Material, lift: number): THREE.Material {
 }
 
 const spriteTexCache = new Map<string, { tex: THREE.CanvasTexture; aspect: number }>();
+const MAX_POPUP_TEX_CACHE = 48;
+
+function disposeSpriteTexCache(): void {
+  for (const entry of spriteTexCache.values()) {
+    entry.tex.dispose();
+  }
+  spriteTexCache.clear();
+}
 
 function getPopupTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
   const key = `pop:${text}`;
   const hit = spriteTexCache.get(key);
   if (hit) return hit;
+
+  if (spriteTexCache.size >= MAX_POPUP_TEX_CACHE) {
+    for (const [oldKey, oldEntry] of spriteTexCache) {
+      if (oldKey.startsWith('pop:')) {
+        oldEntry.tex.dispose();
+        spriteTexCache.delete(oldKey);
+        break;
+      }
+    }
+  }
 
   const h = 110;
   const font = '700 48px "Segoe UI", system-ui, sans-serif';
@@ -757,6 +775,9 @@ export class KuroCatEngine3D {
   private readonly tmpPawLocal = new THREE.Vector3();
   private readonly tmpArmOff = new THREE.Vector3();
   private readonly tmpFxPos = new THREE.Vector3();
+  private fpsCap = 0;
+  private sleepTrimSent = false;
+  public onDeepSleep: (() => void) | null = null;
 
   constructor(canvas: HTMLCanvasElement, options?: { embedded?: boolean }) {
     this.canvas = canvas;
@@ -1458,6 +1479,38 @@ export class KuroCatEngine3D {
     this.gameActive = Boolean(active);
   }
 
+  public setFpsCap(cap: number): void {
+    this.fpsCap = cap === 30 ? 30 : cap === 60 ? 60 : 0;
+  }
+
+  public dispose(): void {
+    this.stop();
+    this.desk.dispose();
+    this.scene.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const mat = mesh.material;
+      if (Array.isArray(mat)) {
+        for (const m of mat) {
+          const anyMat = m as unknown as { map?: THREE.Texture | null };
+          anyMat.map?.dispose();
+          m.dispose();
+        }
+      } else if (mat) {
+        const anyMat = mat as unknown as { map?: THREE.Texture | null };
+        anyMat.map?.dispose();
+        mat.dispose();
+      }
+    });
+    disposeSpriteTexCache();
+    this.renderer.dispose();
+    try {
+      this.renderer.forceContextLoss();
+    } catch {
+      // Ignore if context already lost
+    }
+  }
+
   private readonly renderFrame = (nowMs: number): void => {
     const frameId = this.rafId;
     const workStart = performance.now();
@@ -1496,13 +1549,24 @@ export class KuroCatEngine3D {
       Math.abs(this.sOrbitAz.v) > 0.05 ||
       Math.abs(this.sOrbitEl.v) > 0.05;
 
+    // Trigger one-time OS working-set trim once deeply asleep to keep idle RAM minimal
+    if (this.sleepAmt > 0.96) {
+      if (!this.sleepTrimSent) {
+        this.sleepTrimSent = true;
+        this.onDeepSleep?.();
+      }
+    } else if (this.sleepAmt < 0.2) {
+      this.sleepTrimSent = false;
+    }
+
     // Smart adaptive frame pacing:
     // - Calibrate VSync over first 8 active frames
+    // - User Eco 30 FPS or Game Eco Mode: cap cleanly at 30 FPS (cuts GPU/CPU by 2x-8x!)
     // - On 60Hz monitors in normal mode: native direct rAF (0 timer jitter)
     // - On 120-240Hz monitors in normal mode: cap cleanly at 60 FPS (cuts 240Hz GPU/CPU by 4x!)
-    // - In Game Eco Mode (foreground PC game detected): cap at 30 FPS (cuts 240Hz GPU/CPU by 8x!)
     // - Idle awake: ~18 FPS (55ms); Deep sleep: ~12 FPS (85ms)
-    if (busy && (this.vsyncSamples < 8 || (!this.gameActive && this.vsyncMs >= 13.5))) {
+    const eco30 = this.gameActive || this.fpsCap === 30;
+    if (busy && (this.vsyncSamples < 8 || (!eco30 && this.vsyncMs >= 13.5))) {
       this.isIdlePacing = false;
       this.directRafPrevMs = nowMs;
       this.rafId = requestAnimationFrame(this.renderFrame);
@@ -1512,7 +1576,7 @@ export class KuroCatEngine3D {
     this.directRafPrevMs = 0;
     const workMs = performance.now() - workStart;
     const targetMs = busy
-      ? this.gameActive
+      ? eco30
         ? 33.33
         : 16.67
       : this.sleepAmt > 0.95
@@ -1657,7 +1721,8 @@ export class KuroCatEngine3D {
   }
 
   public triggerCuriousDemo(durSec = 3.6): void {
-    this.wake();
+    this.wake('gentle');
+    this.wakeAt = -100;
     this.isCross = false;
     this.annoy = 0;
     this.curiousUntil = this.elapsed + durSec;
@@ -1666,7 +1731,8 @@ export class KuroCatEngine3D {
   }
 
   public triggerCrossDemo(): void {
-    this.wake();
+    this.wake('gentle');
+    this.wakeAt = -100;
     this.curiousUntil = -100;
     this.annoy = 0.96;
     this.lastPoke = this.elapsed;
@@ -1687,7 +1753,8 @@ export class KuroCatEngine3D {
   }
 
   public triggerTailPatDemo(): void {
-    this.wake();
+    this.wake('gentle');
+    this.wakeAt = -100;
     this.isCross = false;
     const targetId = this.desk.getKeyById('enter') ? 'enter' : 'space';
     this.triggerTailKey(targetId, targetId === 'enter' ? 'Enter' : 'Space');
@@ -1706,7 +1773,7 @@ export class KuroCatEngine3D {
     }
     const k = this.desk.resolveKey(vk);
     if (!k) return;
-    this.wake();
+    this.wake(repeat ? 'gentle' : 'abrupt');
     if (repeat) return;
 
     this.lastKey = this.elapsed;
@@ -1778,7 +1845,7 @@ export class KuroCatEngine3D {
       return;
     }
 
-    this.wake();
+    this.wake('abrupt');
     const gap = this.elapsed - this.lastSampleT;
     if (this.lastSampleX !== null && this.lastSampleY !== null && gap > 0 && gap <= 0.14) {
       const dist = Math.hypot(nx - this.lastSampleX, ny - this.lastSampleY);
@@ -1808,12 +1875,15 @@ export class KuroCatEngine3D {
       this.petting = true;
       this.petUntil = this.elapsed + 0.36;
       this.petX = clamp(this.cursorNdc.x * 2.0, -1, 1);
-      this.wake();
+      this.wake('gentle');
+      this.wakeAt = -100;
+      this.isCross = false;
+      this.annoy = 0;
     }
   }
 
   public onMouseDown(btn: string): void {
-    this.wake();
+    this.wake('abrupt');
     this.lastMouse = this.elapsed;
     this.paws.L.lastActive = this.elapsed;
     if (btn === 'left') this.leftMouseDown = true;
@@ -1828,7 +1898,7 @@ export class KuroCatEngine3D {
   }
 
   public onMouseWheel(): void {
-    this.wake();
+    this.wake('abrupt');
     this.lastMouse = this.elapsed;
     this.paws.L.lastActive = this.elapsed;
     this.desk.pulseScrollWheel();
@@ -1879,7 +1949,10 @@ export class KuroCatEngine3D {
         this.petting = true;
         this.petUntil = this.elapsed + 0.30;
         this.petX = clamp(this.cursorNdc.x * 2.5, -1, 1);
-        this.wake();
+        this.wake('gentle');
+        this.wakeAt = -100;
+        this.isCross = false;
+        this.annoy = 0;
       }
     }
     return overHead;
@@ -1923,13 +1996,28 @@ export class KuroCatEngine3D {
     this.rafId = requestAnimationFrame(this.renderFrame);
   }
 
-  private wake(): void {
-    this.lastInput = this.elapsed;
+  private wake(mode: 'gentle' | 'abrupt' = 'gentle'): void {
+    const t = this.elapsed;
+    const wasAsleep = this.asleep;
+    const recentlyWoken = wasAsleep || this.sleepAmt >= 0.45 || t - this.wakeAt < 1.2;
+    this.lastInput = t;
     this.wakeRendering();
-    if (this.asleep) {
+    if (wasAsleep) {
       this.asleep = false;
-      this.wakeAt = this.elapsed;
+      this.wakeAt = t;
       this.sSquash.kick(-1.1);
+    }
+    if (mode === 'abrupt' && recentlyWoken && !this.privacyMode && !this.petting && !this.isCross) {
+      // Grumpy wake-up ("起床气"): ~3.2s airplane ears + 3-beat tail desk-thump when rudely jolted from sleep!
+      this.isCross = true;
+      this.crossSince = t;
+      this.crossHuffDir = this.cursorNdc.x >= 0 ? -1 : 1;
+      this.thumpPhase = 0;
+      this.curiousUntil = -100;
+      this.idleAct = null;
+      this.annoy = Math.max(this.annoy, 0.44);
+      this.lastPoke = t - 1.2;
+      this.wakeAt = -100;
     }
   }
 

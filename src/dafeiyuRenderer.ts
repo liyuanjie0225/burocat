@@ -58,7 +58,7 @@ interface FloatingParticle {
  * support, and adorable hands-covering-eyes password privacy mode.
  */
 export class DaFeiYuRenderer {
-  private sprites: Record<'idle' | 'blink' | 'shy' | 'happy', HTMLImageElement>;
+  private sprites: Record<'idle' | 'blink' | 'shy' | 'happy', HTMLImageElement> | null = null;
   private hairBangsCanvas: HTMLCanvasElement | null = null;
   private hairBangsAttempted = false;
 
@@ -124,17 +124,40 @@ export class DaFeiYuRenderer {
   private particles: FloatingParticle[] = [];
 
   constructor() {
-    const mk = (src: string) => {
-      const img = new Image();
-      img.src = src;
-      return img;
-    };
-    this.sprites = {
-      idle: mk(idleUrl),
-      blink: mk(blinkUrl),
-      shy: mk(shyUrl),
-      happy: mk(happyUrl),
-    };
+    // Sprites are lazy-loaded on first render so default cat skins never decode 4 PNGs into RAM.
+  }
+
+  private ensureSprites(): Record<'idle' | 'blink' | 'shy' | 'happy', HTMLImageElement> {
+    if (!this.sprites) {
+      const mk = (src: string) => {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = src;
+        return img;
+      };
+      this.sprites = {
+        idle: mk(idleUrl),
+        blink: mk(blinkUrl),
+        shy: mk(shyUrl),
+        happy: mk(happyUrl),
+      };
+    }
+    return this.sprites;
+  }
+
+  public releaseSprites(): void {
+    if (this.sprites) {
+      for (const img of Object.values(this.sprites)) {
+        img.src = '';
+      }
+      this.sprites = null;
+    }
+    if (this.hairBangsCanvas) {
+      this.hairBangsCanvas.width = 0;
+      this.hairBangsCanvas.height = 0;
+      this.hairBangsCanvas = null;
+    }
+    this.hairBangsAttempted = false;
   }
 
   public onPrivacyModeChanged(active: boolean): void {
@@ -776,7 +799,8 @@ export class DaFeiYuRenderer {
     else if (this.moodTier === 1) exprKey = 'shy';
     else if (isBlinking) exprKey = 'blink';
 
-    const img = this.sprites[exprKey] || this.sprites.idle;
+    const sprites = this.ensureSprites();
+    const img = sprites[exprKey] || sprites.idle;
     if (img && img.complete && img.naturalWidth > 0) {
       ctx.save();
       ctx.beginPath();
@@ -792,7 +816,7 @@ export class DaFeiYuRenderer {
         ctx.save();
         ctx.translate(-g.drawW * 0.5, -g.drawH + g.pivotOff);
         ctx.scale(g.drawW / 224, g.drawH / 278);
-        this.renderLiveEyes(ctx, this.eyeGazeX, this.eyeGazeY, this.sprites.idle);
+        this.renderLiveEyes(ctx, this.eyeGazeX, this.eyeGazeY, sprites.idle);
         ctx.restore();
       }
 
@@ -1020,12 +1044,9 @@ export class DaFeiYuRenderer {
 
     if (layer === 'front' && slapPhase > 0.25) {
       ctx.save();
-      ctx.shadowColor = 'rgba(7, 16, 40, 0.45)';
-      ctx.shadowBlur = 10;
-      ctx.shadowOffsetY = 5;
-      ctx.fillStyle = 'rgba(20, 40, 88, 0.25)';
+      ctx.fillStyle = 'rgba(20, 40, 88, 0.22)';
       ctx.beginPath();
-      ctx.ellipse(tipX, tipY + 4, 20, 12, 0, 0, Math.PI * 2);
+      ctx.ellipse(tipX, tipY + 6, 22, 13, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
