@@ -929,3 +929,50 @@ html.win7-ulw-mode .floating-side-menu {
 .footer-btn.danger:hover {
   background: rgba(255, 92, 92, 0.18);
 }
+
+/* "AI agent is working" pill: shares the spot above the head with the update toast
+   (which wins). Display only, so it never takes clicks away from what is underneath. */
+.agent-pill {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 20px);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(20, 22, 28, 0.82);
+  border: 1px solid rgba(120, 200, 255, 0.45);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  color: #f4f6f8;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 9997;
+  animation: toastPop 0.2s ease-out;
+}
+
+.agent-pill.hidden {
+  display: none;
+}
+
+.agent-pill.waiting {
+  border-color: rgba(255, 196, 61, 0.75);
+  animation: toastPop 0.2s ease-out, agentPillPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes agentPillPulse {
+  50% { border-color: rgba(255, 196, 61, 1); }
+}
+
+@media (max-width: 260px) {
+  .agent-pill {
+    top: 6px;
+    max-width: calc(100vw - 10px);
+    padding: 2.5px 7px;
+    font-size: 10px;
+  }
+}

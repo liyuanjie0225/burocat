@@ -25,9 +25,17 @@ interface AppSettings {
   obsEnabled: boolean;
   obsPort: number;
   obsHidePet: boolean;
+  agentStatusEnabled: boolean;
+  agentHookAutoInstall: boolean;
   renderMode?: '2d' | '3d';
   collarColor?: 'none' | 'red' | 'blue' | 'pink' | 'green';
   headphoneMode?: 'auto' | 'on' | 'off';
+}
+
+interface AgentHookInfo {
+  detected: boolean;
+  installed: boolean;
+  error: string | null;
 }
 
 interface UpdateInfo {
@@ -81,6 +89,8 @@ let settings: AppSettings = {
   obsEnabled: false,
   obsPort: 27421,
   obsHidePet: false,
+  agentStatusEnabled: true,
+  agentHookAutoInstall: true,
   renderMode: '3d',
   collarColor: 'none',
   headphoneMode: 'off',
@@ -101,7 +111,24 @@ const scaleValueEl = document.getElementById('scale-value') as HTMLButtonElement
 const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanElement;
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const btnObsHideEl = document.getElementById('btn-obs-hide') as HTMLButtonElement;
+const btnAgentHookEl = document.getElementById('btn-agent-hook') as HTMLButtonElement | null;
 const btnCheckUpdateEl = document.getElementById('btn-check-update') as HTMLButtonElement | null;
+
+function agentHookHintText(info: AgentHookInfo): string {
+  if (!info.detected) return '未检测到';
+  if (info.error) return '配置异常';
+  return info.installed ? '✓ 已接入' : '未接入';
+}
+
+async function refreshAgentHookHint(): Promise<void> {
+  const hint = document.getElementById('agent-hook-hint');
+  if (!hint) return;
+  try {
+    hint.textContent = agentHookHintText(await invoke<AgentHookInfo>('get_agent_hook_info'));
+  } catch {
+    hint.textContent = '';
+  }
+}
 
 function switchTab(nextTab: MenuTabId): void {
   activeTab = nextTab;
@@ -182,6 +209,12 @@ function syncUI(): void {
   setCheck('chk-mcp', settings.mcpEnabled);
   setCheck('chk-obs', Boolean(settings.obsEnabled));
   setCheck('chk-obs-hide', Boolean(settings.obsEnabled && settings.obsHidePet));
+  setCheck('chk-agent', settings.agentStatusEnabled);
+  setCheck('chk-agent-hook', settings.agentHookAutoInstall);
+
+  if (btnAgentHookEl) {
+    btnAgentHookEl.classList.toggle('hidden', !settings.agentStatusEnabled);
+  }
 
   if (btnObsHideEl) {
     btnObsHideEl.classList.toggle('hidden', !settings.obsEnabled);
@@ -577,6 +610,17 @@ async function bootstrap(): Promise<void> {
       case 'toggle-mcp':
         void applySettingsPatch({ mcpEnabled: !settings.mcpEnabled });
         break;
+      case 'toggle-agent':
+        // Both switches rewrite (or restore) the ZCode config, so the hint follows them.
+        void applySettingsPatch({ agentStatusEnabled: !settings.agentStatusEnabled }).then(
+          refreshAgentHookHint,
+        );
+        break;
+      case 'toggle-agent-hook':
+        void applySettingsPatch({ agentHookAutoInstall: !settings.agentHookAutoInstall }).then(
+          refreshAgentHookHint,
+        );
+        break;
       case 'copy-mcp':
         void copyMcpConfig();
         break;
@@ -643,6 +687,7 @@ async function bootstrap(): Promise<void> {
       }
       syncUI();
       renderFooterUpdateState();
+      void refreshAgentHookHint();
       if (tabBodyEl) tabBodyEl.scrollTop = 0;
     } catch {}
   });

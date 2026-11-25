@@ -10,6 +10,7 @@ import {
 } from './catEngine';
 import { catAudio } from './audio';
 import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
+import { initAgentStatus } from './agentStatus';
 import {
   getKeyboardLayout,
   resolveKeyByVk,
@@ -45,6 +46,8 @@ interface AppSettings {
   renderMode?: DesktopRenderMode;
   collarColor?: CollarColorId;
   headphoneMode?: HeadphoneMode;
+  agentStatusEnabled: boolean;
+  agentHookAutoInstall: boolean;
 }
 
 type InputEvent =
@@ -150,6 +153,8 @@ let settings: AppSettings = {
   renderMode: '3d',
   collarColor: 'none',
   headphoneMode: 'off',
+  agentStatusEnabled: true,
+  agentHookAutoInstall: true,
 };
 
 let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
@@ -1057,6 +1062,17 @@ async function bootstrap(): Promise<void> {
     engine3d?.setGameActive(gameActive);
     engine.setHeadphones(wearNow);
     engine3d?.setHeadphones(wearNow);
+  });
+
+  await initAgentStatus({
+    isEnabled: () => settings.agentStatusEnabled,
+    noticeBottom: () =>
+      currentToastKind !== null ? updateToastEl.getBoundingClientRect().bottom : null,
+    showNotice: (text) => showUpdateToast(text, { autoHideMs: 9000, kind: 'transient' }),
+    onAttention: () => {
+      engine.triggerCuriousDemo();
+      engine3d?.triggerCuriousDemo();
+    },
   });
 
   let lastPetHover = false;

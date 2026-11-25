@@ -60,6 +60,16 @@ pub fn default_headphone_mode() -> String {
     "off".to_string()
 }
 
+/// AI agents (ZCode, …) report task progress to the pet; on unless the user opts out.
+fn default_agent_status_enabled() -> bool {
+    true
+}
+
+/// Write the pet's hook into the agents' own config so no manual setup is needed.
+fn default_agent_hook_auto_install() -> bool {
+    true
+}
+
 pub fn normalize_headphone_mode(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "auto" => "auto".to_string(),
@@ -183,6 +193,10 @@ pub struct AppSettings {
     pub collar_color: String,
     #[serde(default = "default_headphone_mode")]
     pub headphone_mode: String,
+    #[serde(default = "default_agent_status_enabled")]
+    pub agent_status_enabled: bool,
+    #[serde(default = "default_agent_hook_auto_install")]
+    pub agent_hook_auto_install: bool,
 }
 
 impl Default for AppSettings {
@@ -214,6 +228,8 @@ impl Default for AppSettings {
             render_mode: default_render_mode(),
             collar_color: default_collar_color(),
             headphone_mode: default_headphone_mode(),
+            agent_status_enabled: default_agent_status_enabled(),
+            agent_hook_auto_install: default_agent_hook_auto_install(),
         }
     }
 }
@@ -512,18 +528,26 @@ mod tests {
 
     #[test]
     fn legacy_settings_json_deserializes_with_tail_defaults() {
-        let legacy = r#"{
-            "x": null,
-            "y": null,
-            "scale": 1.0,
-            "alwaysOnTop": true,
-            "clickThroughLocked": false,
-            "showKeyBubbles": true,
-            "soundEnabled": true,
-            "autostart": false
-        }"#;
-        let parsed: AppSettings = serde_json::from_str(legacy).expect("legacy json should parse");
+        let parsed: AppSettings = serde_json::from_str(LEGACY_SETTINGS_JSON).expect("legacy json should parse");
         assert_eq!(parsed.tail_key_mode, "smart");
         assert_eq!(parsed.tail_key_ids, default_tail_key_ids());
     }
+
+    #[test]
+    fn agent_status_defaults_on_for_settings_written_before_it_existed() {
+        let parsed: AppSettings = serde_json::from_str(LEGACY_SETTINGS_JSON).expect("legacy json should parse");
+        assert!(parsed.agent_status_enabled);
+        assert!(parsed.agent_hook_auto_install);
+    }
+
+    const LEGACY_SETTINGS_JSON: &str = r#"{
+        "x": null,
+        "y": null,
+        "scale": 1.0,
+        "alwaysOnTop": true,
+        "clickThroughLocked": false,
+        "showKeyBubbles": true,
+        "soundEnabled": true,
+        "autostart": false
+    }"#;
 }

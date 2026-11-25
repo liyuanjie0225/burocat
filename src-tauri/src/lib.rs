@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+mod agent_hooks;
+mod agent_status;
 mod cats;
 mod config;
 mod game_detect;
@@ -252,6 +254,11 @@ pub fn run_mcp_stdio() {
     mcp::run_stdio_mcp();
 }
 
+/// `KuroCat --agent-hook <source>`: entry point coding agents spawn from their hooks.
+pub fn run_agent_hook(source: &str) -> ! {
+    agent_status::run_agent_hook(source)
+}
+
 pub struct AppState {
     pub settings: Arc<Mutex<AppSettings>>,
     pub menu_open: Arc<AtomicBool>,
@@ -356,6 +363,7 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSet
 
     state.mcp_enabled.store(patch.mcp_enabled, Ordering::Relaxed);
     obs::sync_obs_server(&app, patch.obs_enabled, patch.obs_port);
+    agent_status::sync(&app, &patch);
 
     let next_obs_hide = patch.obs_enabled && patch.obs_hide_pet;
     if next_obs_hide != prev_obs_hide && !state.paused_guard.load(Ordering::Relaxed) {
@@ -985,6 +993,7 @@ pub fn reload_and_emit_all(app: &AppHandle) {
     state
         .mcp_enabled
         .store(disk_settings.mcp_enabled, Ordering::Relaxed);
+    agent_status::sync(app, &disk_settings);
 
     if top_changed {
         set_pet_always_on_top(app, disk_settings.always_on_top);
@@ -2396,6 +2405,7 @@ pub fn run() {
             mcp::start_http_mcp_server(mcp_port, mcp_for_setup, move || {
                 reload_and_emit_all(&http_handle);
             });
+            agent_status::init(&handle);
 
             // Forward settings / cats / privacy broadcasts to OBS SSE clients (1ns no-op when OBS is off)
             handle.listen("kuro-settings", |ev| {
@@ -2459,6 +2469,9 @@ pub fn run() {
             get_cats,
             get_game_active,
             get_mcp_config,
+            agent_status::get_agent_hook_info,
+            agent_status::get_agent_snapshot,
+            agent_status::agent_ui_reported,
             get_obs_url,
             get_app_version,
             update_settings,

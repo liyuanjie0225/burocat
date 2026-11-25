@@ -164,6 +164,19 @@
             <span>复制 MCP 配置</span>
             <span class="menu-hint" id="mcp-copy-hint">AI 捏猫</span>
           </button>
+          <button class="menu-item" data-action="toggle-agent" title="ZCode 等 AI 助手干活时在猫头顶显示进度，完成后提醒你">
+            <span>AI 任务进度提醒</span>
+            <span class="menu-check" id="chk-agent"></span>
+          </button>
+          <button
+            class="menu-item"
+            data-action="toggle-agent-hook"
+            id="btn-agent-hook"
+            title="把状态 Hook 写入 ZCode 配置（只增删 KuroCat 自己的条目），关闭即原样还原"
+          >
+            <span>自动接入 ZCode</span>
+            <span class="menu-hint" id="agent-hook-hint"></span>
+          </button>
 
           <div class="menu-sep"></div>
 
