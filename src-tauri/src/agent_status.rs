@@ -44,7 +44,7 @@ const RECENT_EVENTS: usize = 40;
 pub struct AgentEvent {
     /// `zcode`, `cursor`, … (free-form, slugified).
     pub source: String,
-    /// `info` | `start` | `tool` | `permission` | `done`.
+    /// `info` | `start` | `tool` | `tool_start` | `permission` | `done`.
     pub event: String,
     /// Opaque agent-side session id; one task per source + session.
     pub session: String,
@@ -71,7 +71,10 @@ impl AgentEvent {
             return None;
         }
         self.event = self.event.trim().to_ascii_lowercase();
-        if !matches!(self.event.as_str(), "info" | "start" | "tool" | "permission" | "done") {
+        if !matches!(
+            self.event.as_str(),
+            "info" | "start" | "tool" | "tool_start" | "permission" | "done"
+        ) {
             return None;
         }
         self.label = one_line(&self.label, 60);
@@ -132,7 +135,10 @@ pub fn hook_payload_to_event(
         "PostToolUseFailure" if truthy(&value, &["is_interrupt", "isInterrupt"]) => {
             ("done", "interrupted")
         }
-        "PreToolUse" | "PostToolUse" | "PostToolUseFailure" => ("tool", ""),
+        // A tool starting is distinct from one finishing: while it runs the agent is
+        // busy, not thinking — the pet must keep typing through long commands.
+        "PreToolUse" => ("tool_start", ""),
+        "PostToolUse" | "PostToolUseFailure" => ("tool", ""),
         // Runs once per session and on compaction: neither starts nor ends a turn.
         "SessionStart" => ("info", ""),
         _ => return None,
@@ -184,6 +190,9 @@ pub struct AgentTask {
     pub tools: u32,
     /// The tool the turn ran most recently, so the pet can show it while working.
     pub last_tool: String,
+    /// The tool that has started but not finished yet: a quiet turn with one of
+    /// these running is a long command, not a thinking pause.
+    pub pending_tool: String,
     pub started_ms: u64,
     pub last_event_ms: u64,
 }
@@ -251,6 +260,7 @@ fn new_task(event: &AgentEvent, now: u64) -> AgentTask {
         tool: String::new(),
         tools: 0,
         last_tool: String::new(),
+        pending_tool: String::new(),
         started_ms: now,
         last_event_ms: now,
     }
@@ -284,6 +294,7 @@ impl AgentRegistry {
                 task.tool.clear();
                 task.tools = 0;
                 task.last_tool.clear();
+                task.pending_tool.clear();
                 task.started_ms = now;
                 task.last_event_ms = now;
                 if !event.label.is_empty() {
@@ -300,9 +311,19 @@ impl AgentRegistry {
                     task.waiting = false;
                     task.tool.clear();
                     task.tools = task.tools.saturating_add(1);
+                    task.pending_tool.clear();
                     if !event.tool.is_empty() {
                         task.last_tool = event.tool.clone();
                     }
+                    task.last_event_ms = now;
+                }
+                None
+            }
+            "tool_start" => {
+                if let Some(task) = self.tasks.get_mut(&id) {
+                    // A started tool keeps the turn busy until it reports finished;
+                    // the step count still only counts finished calls.
+                    task.pending_tool = event.tool.clone();
                     task.last_event_ms = now;
                 }
                 None
@@ -809,6 +830,38 @@ mod tests {
     }
 
     #[test]
+    fn a_started_tool_keeps_the_turn_busy_without_counting_a_step() {
+        let mut registry = AgentRegistry::default();
+        apply(&mut registry, start(SESSION), 1_000);
+        let (snapshot, _) = apply(
+            &mut registry,
+            AgentEvent {
+                tool: "Bash".into(),
+                ..hook_event("tool_start", SESSION)
+            },
+            2_000,
+        );
+        assert_eq!(snapshot.tasks[0].pending_tool, "Bash", "the turn is busy running it");
+        assert_eq!(snapshot.tasks[0].tools, 0, "steps still only count finished calls");
+        assert_eq!(snapshot.tasks[0].last_event_ms, 2_000);
+
+        let (snapshot, _) = apply(
+            &mut registry,
+            AgentEvent {
+                tool: "Bash".into(),
+                ..hook_event("tool", SESSION)
+            },
+            62_000,
+        );
+        assert_eq!(snapshot.tasks[0].pending_tool, "", "finishing clears the pending tool");
+        assert_eq!(snapshot.tasks[0].tools, 1);
+        assert_eq!(snapshot.tasks[0].last_tool, "Bash");
+
+        let (snapshot, _) = apply(&mut registry, start(SESSION), 120_000);
+        assert_eq!(snapshot.tasks[0].pending_tool, "", "a new turn starts clean");
+    }
+
+    #[test]
     fn finished_tools_are_the_progress_of_a_turn_and_reset_with_the_next_one() {
         let mut registry = AgentRegistry::default();
         apply(&mut registry, start(SESSION), 1_000);
@@ -1018,6 +1071,12 @@ mod tests {
 
         let tool = r#"{"hook_event_name":"PostToolUse","session_id":"s","tool_name":"Bash"}"#;
         assert_eq!(hook_payload_to_event("zcode", tool, &NO_ENV).expect("event").event, "tool");
+
+        let pre_tool = r#"{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"Bash"}"#;
+        assert_eq!(
+            hook_payload_to_event("zcode", pre_tool, &NO_ENV).expect("event").event,
+            "tool_start"
+        );
 
         let session_start = r#"{"hook_event_name":"SessionStart","session_id":"s","source":"startup","model":"glm/GLM-5.4"}"#;
         let event = hook_payload_to_event("zcode", session_start, &NO_ENV).expect("event");

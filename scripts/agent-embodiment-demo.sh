@@ -6,11 +6,15 @@
 # Usage:
 #   ./scripts/agent-embodiment-demo.sh              # full turn: work -> wait -> done (confetti)
 #   ./scripts/agent-embodiment-demo.sh --interrupted # same, but the turn ends interrupted (sigh)
+#   ./scripts/agent-embodiment-demo.sh --thinking   # thinking pauses + a long command
 #
 # The cat should: fake-type with tool-name bubbles while working -> look up at you
 # with a "⏸ tool" bubble on the permission request -> resume typing once answered
-# -> celebrate with confetti (or sigh when interrupted). The pill + done notice
-# ride along as usual. Quit the production app first so the dev build owns 27422.
+# -> celebrate with confetti (or sigh when interrupted). After 6s without a tool
+# event and nothing running it pauses into the curious thinking gaze (💭 bubble,
+# 💭 pill icon) — and keeps typing straight through a started long command. The
+# pill + done notice ride along as usual. Quit the production app first so the
+# dev build owns 27422.
 set -euo pipefail
 
 PORT="${KUROCAT_AGENT_PORT:-27422}"
@@ -19,7 +23,8 @@ MODE="full"
 for arg in "$@"; do
   case "$arg" in
     --interrupted) MODE="interrupted" ;;
-    *) echo "unknown flag: $arg (supported: --interrupted)" >&2; exit 2 ;;
+    --thinking) MODE="thinking" ;;
+    *) echo "unknown flag: $arg (supported: --interrupted, --thinking)" >&2; exit 2 ;;
   esac
 done
 
@@ -47,15 +52,36 @@ hold 3
 
 for tool in Bash Read Edit; do
   step "tool: ${tool} — strike burst + tool bubble"
+  post "{\"source\":\"zcode\",\"event\":\"tool_start\",\"session\":\"${SESSION}\",\"tool\":\"${tool}\"}"
+  hold 1
   post "{\"source\":\"zcode\",\"event\":\"tool\",\"session\":\"${SESSION}\",\"tool\":\"${tool}\"}"
   hold 4
 done
+
+step "quiet 8s — the cat pauses into the thinking gaze (💭 bubble + pill icon)"
+hold 8
+
+if [ "$MODE" = "thinking" ]; then
+  step "long command starts — the cat KEEPS typing while Bash runs 12s"
+  post "{\"source\":\"zcode\",\"event\":\"tool_start\",\"session\":\"${SESSION}\",\"tool\":\"Bash\"}"
+  hold 12
+  step "command finished — typing continues, then thinking again after 7s"
+  post "{\"source\":\"zcode\",\"event\":\"tool\",\"session\":\"${SESSION}\",\"tool\":\"Bash\"}"
+  hold 7
+  step "turn done — confetti + done notice"
+  post "{\"source\":\"zcode\",\"event\":\"done\",\"session\":\"${SESSION}\",\"label\":\"写一个排序脚本\",\"message\":\"写好了 sort.sh\"}"
+  echo
+  echo "Done. Live registry state: curl -s http://127.0.0.1:${PORT}/agent-state | jq ."
+  exit 0
+fi
 
 step "permission needed — cat looks up at you, waiting"
 post "{\"source\":\"zcode\",\"event\":\"permission\",\"session\":\"${SESSION}\",\"tool\":\"Bash\"}"
 hold 8
 
 step "answered (tool ran) — cat goes back to typing"
+post "{\"source\":\"zcode\",\"event\":\"tool_start\",\"session\":\"${SESSION}\",\"tool\":\"Write\"}"
+hold 1
 post "{\"source\":\"zcode\",\"event\":\"tool\",\"session\":\"${SESSION}\",\"tool\":\"Write\"}"
 hold 5
 

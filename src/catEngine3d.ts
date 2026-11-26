@@ -809,6 +809,7 @@ export class KuroCatEngine3D {
   // up at the user while it waits, confetti when a turn finishes. Strikes never
   // touch lastKey/strokes so "user real input always wins" stays driven by the human.
   private agentWorking = false;
+  private agentThinking = false;
   private agentToolLabel = '';
   private agentWaiting = false;
   private agentWaitBlend = 0;
@@ -2091,13 +2092,32 @@ export class KuroCatEngine3D {
   }
 
   /**
+   * The model is between tools: the paws rest and the cat gazes curious — big
+   * pupils, perked ears, a slight head cock — until work hands it back the keys.
+   * A sleeping cat stays asleep; the next strike will wake it as always.
+   */
+  public setAgentThinking(active: boolean): void {
+    if (this.agentThinking === active) return;
+    this.agentThinking = active;
+    if (active && !this.privacyMode && !this.asleep) {
+      this.sCurious.kick(2.4);
+      this.sEars.kick(2.2);
+      if (this.showKeyBubbles) {
+        const keyId = this.desk.getKeyById('enter') ? 'enter' : 'space';
+        this.spawnKeyPopup(keyId, '💭', 1);
+      }
+      this.wakeRendering();
+    }
+  }
+
+  /**
    * The tool the turn ran most recently. Every call is a work beat: it queues a
    * strike; a changed label also shows a tool-name popup soon.
    */
   public setAgentToolLabel(label: string): void {
     const changed = this.agentToolLabel !== label;
     this.agentToolLabel = label;
-    if (!this.agentWorking) return;
+    if (!this.agentWorking || this.agentThinking) return;
     this.nextAgentStrike = Math.min(this.nextAgentStrike, this.elapsed + 0.04);
     if (changed) this.lastToolPopupAt = Math.min(this.lastToolPopupAt, this.elapsed - 2.2);
     this.wakeRendering();
@@ -2120,6 +2140,7 @@ export class KuroCatEngine3D {
   public triggerAgentDone(interrupted: boolean): void {
     const t = this.elapsed;
     this.agentWorking = false;
+    this.agentThinking = false;
     this.agentWaiting = false;
     this.nextAgentStrike = 0;
     if (this.privacyMode || this.asleep) return;
@@ -2648,6 +2669,18 @@ export class KuroCatEngine3D {
     if (canCurious && this.pointerSamples.length >= 4 && pointerSpeed > 0.92) {
       this.curiousUntil = Math.max(this.curiousUntil, t + 2.2);
     }
+    // Thinking holds the curious gaze: the window is kept topped up while the model
+    // deliberates, so the springs never fall while it thinks. Grumpy (user-priority)
+    // still wins — mashing keys at a thinking cat makes it cross, not curious.
+    if (
+      this.agentThinking &&
+      !this.agentWaiting &&
+      !this.asleep &&
+      !this.privacyMode &&
+      !this.isCross
+    ) {
+      this.curiousUntil = Math.max(this.curiousUntil, t + 0.9);
+    }
     const curiousNow = !this.asleep && !this.privacyMode && !this.isCross && t < this.curiousUntil;
     const curious = clamp(this.sCurious.step(curiousNow ? 1 : 0, dt), 0, 1);
 
@@ -2737,8 +2770,9 @@ export class KuroCatEngine3D {
 
     // Agent embodiment: while an AI agent works, the cat fake-types on its own mini
     // keyboard. Real user input always wins — strikes pause while the user types or
-    // holds the mouse — and privacy mode pauses everything.
-    if (this.agentWorking && !this.agentWaiting && !this.privacyMode) {
+    // holds the mouse — and privacy mode pauses everything. While the model thinks
+    // the paws rest: no strikes until the next tool hands the keys back.
+    if (this.agentWorking && !this.agentThinking && !this.agentWaiting && !this.privacyMode) {
       if (this.asleep || this.sleepAmt > 0.45) {
         this.wake('abrupt'); // waking for the agent can trigger 起床气 naturally
       }
@@ -2750,9 +2784,12 @@ export class KuroCatEngine3D {
     }
 
     // Agent working gets a steady typing hunch; a sigh slumps; waiting sits upright.
+    // Thinking is watching, not typing: the hunch relaxes like it does for waiting.
     const sighSlump = act && act.kind === 'sigh' ? actEnv * 0.05 : 0;
     const agentHunch =
-      this.agentWorking && !this.agentWaiting && !this.asleep && !this.privacyMode ? 0.10 : 0;
+      this.agentWorking && !this.agentThinking && !this.agentWaiting && !this.asleep && !this.privacyMode
+        ? 0.10
+        : 0;
     const targetHunch =
       (typingActive
         ? 0.09 + 0.08 * this.excite

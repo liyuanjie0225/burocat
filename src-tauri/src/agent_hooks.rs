@@ -17,10 +17,12 @@ use std::path::{Path, PathBuf};
 /// when a tool fails, is denied or interrupted. `PostToolUse` is the one exception: it
 /// fires after every tool call, and is what makes progress visible at all — an agent
 /// reports nothing else while it works, and a turn the user interrupts is never
-/// reported as ended without it.
-pub const ZCODE_EVENTS: [&str; 6] = [
+/// reported as ended without it. `PreToolUse` pairs with it: without the tool it
+/// starts, a long-running command would be indistinguishable from a thinking pause.
+pub const ZCODE_EVENTS: [&str; 7] = [
     "SessionStart",
     "UserPromptSubmit",
+    "PreToolUse",
     "PostToolUse",
     "PermissionRequest",
     "PostToolUseFailure",

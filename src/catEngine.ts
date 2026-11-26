@@ -820,6 +820,7 @@ export class KuroCatEngine {
   // Strikes deliberately never touch lastAnyKeyAt/recentKeyTimes/heldKeys so the
   // "user real input always wins" arbitration stays driven by the human alone.
   private agentWorking = false;
+  private agentThinking = false;
   private agentToolLabel = '';
   private agentWaiting = false;
   private agentWaitBlend = 0;
@@ -1132,13 +1133,30 @@ export class KuroCatEngine {
   }
 
   /**
+   * The model is between tools: the paws rest and the cat gazes curious — big
+   * pupils, perked ears, a slight head cock — until work hands it back the keys.
+   * A sleeping cat stays asleep; the next strike will wake it as always.
+   */
+  public setAgentThinking(active: boolean): void {
+    if (this.agentThinking === active) return;
+    this.agentThinking = active;
+    if (active && !this.privacyMode && !this.asleep) {
+      const now = performance.now();
+      this.curiousSpring.kick(2.4);
+      this.earPerkSpring.kick(2.2);
+      if (this.showKeyBubbles) this.spawnBubble('💭', false, this.kbCenterX, now);
+      this.wakeRendering(now);
+    }
+  }
+
+  /**
    * The tool the turn ran most recently. Every call is a work beat: it queues a
    * quick double-tap strike; a changed label also shows a tool-name bubble soon.
    */
   public setAgentToolLabel(label: string): void {
     const changed = this.agentToolLabel !== label;
     this.agentToolLabel = label;
-    if (!this.agentWorking) return;
+    if (!this.agentWorking || this.agentThinking) return;
     const now = performance.now();
     this.nextAgentStrikeAt = Math.min(this.nextAgentStrikeAt, now + 40);
     if (changed) this.lastToolBubbleAt = Math.min(this.lastToolBubbleAt, now - 2200);
@@ -1162,6 +1180,7 @@ export class KuroCatEngine {
   public triggerAgentDone(interrupted: boolean): void {
     const now = performance.now();
     this.agentWorking = false;
+    this.agentThinking = false;
     this.agentWaiting = false;
     this.nextAgentStrikeAt = 0;
     if (this.privacyMode || this.asleep) return;
@@ -2075,6 +2094,18 @@ export class KuroCatEngine {
     if (canTriggerCurious && this.pointerSamples.length >= 4 && pointerSpeed > 0.92) {
       this.curiousUntil = Math.max(this.curiousUntil, now + 2200);
     }
+    // Thinking holds the curious gaze: the window is kept topped up while the model
+    // deliberates, so the springs never fall while it thinks. Grumpy (user-priority)
+    // still wins — mashing keys at a thinking cat makes it cross, not curious.
+    if (
+      this.agentThinking &&
+      !this.agentWaiting &&
+      !this.asleep &&
+      !this.privacyMode &&
+      !this.isCross
+    ) {
+      this.curiousUntil = Math.max(this.curiousUntil, now + 900);
+    }
     const curiousNow = isCatMode && !this.asleep && !this.privacyMode && !this.isCross && now < this.curiousUntil;
     this.curiousAmount = Math.max(0, Math.min(1.2, this.curiousSpring.step(curiousNow ? 1 : 0, dt)));
     const curiousClamped = Math.min(1, this.curiousAmount);
@@ -2161,8 +2192,9 @@ export class KuroCatEngine {
 
     // Agent embodiment: while an AI agent works, the cat fake-types on its own mini
     // keyboard. Real user input always wins — strikes pause while the user types or
-    // holds the mouse — and privacy mode pauses everything.
-    if (this.agentWorking && !this.agentWaiting && !this.privacyMode) {
+    // holds the mouse — and privacy mode pauses everything. While the model thinks
+    // the paws rest: no strikes until the next tool hands the keys back.
+    if (this.agentWorking && !this.agentThinking && !this.agentWaiting && !this.privacyMode) {
       if (this.asleep || this.sleepAmount > 0.45) {
         this.wakeCat(now, 'abrupt'); // waking for the agent can trigger 起床气 naturally
       }
@@ -2181,8 +2213,15 @@ export class KuroCatEngine {
     // Agent working gets a steady typing hunch; a sigh slumps; waiting sits the cat
     // upright so it can look up at the person it is waiting on.
     const sighSlump = act && act.kind === 'sigh' ? actEnv * 0.42 : 0;
+    // Thinking is watching, not typing: the hunch relaxes like it does for waiting.
     const agentHunch =
-      this.agentWorking && !this.agentWaiting && !this.asleep && !this.privacyMode ? 0.4 : 0;
+      this.agentWorking &&
+      !this.agentThinking &&
+      !this.agentWaiting &&
+      !this.asleep &&
+      !this.privacyMode
+        ? 0.4
+        : 0;
     const targetHunch =
       ((isTypingRecently ? 0.45 + this.typingEnergy * 0.55 : curiousClamped * 0.28) +
         agentHunch +

@@ -17,6 +17,13 @@ import { listen } from '@tauri-apps/api/event';
  */
 export const AGENT_ACTIVE_MS = 3 * 60 * 1000;
 
+/**
+ * A running turn quiet this long reads as the model thinking: the cat pauses its
+ * typing and gazes curious instead. A turn with a started-but-unfinished tool is
+ * never thinking — a long command is busy work, not deliberation.
+ */
+export const AGENT_THINKING_MS = 6 * 1000;
+
 const TICK_MS = 1000;
 /** Longer titles are clipped so the duration stays visible in the narrow toast. */
 const NOTICE_LABEL_MAX = 10;
@@ -39,6 +46,8 @@ export interface AgentTask {
   tools: number;
   /** The tool the turn ran most recently (embodiment tool bubbles). */
   lastTool: string;
+  /** The tool started but not finished yet: empty when the model is on its own. */
+  pendingTool: string;
   startedMs: number;
   lastEventMs: number;
 }
@@ -83,6 +92,15 @@ export function activeAgentTasks(snapshot: AgentSnapshot | null, now: number): A
   return (snapshot?.tasks ?? []).filter((task) => now - task.lastEventMs < AGENT_ACTIVE_MS);
 }
 
+/**
+ * A running turn whose model is between tools: quiet for a while, nothing pending.
+ * The same predicate drives the pill icon and the embodiment acting, so the two
+ * never disagree about what the cat is doing.
+ */
+export function agentTaskThinking(task: AgentTask, now: number): boolean {
+  return !task.waiting && !task.pendingTool && now - task.lastEventMs >= AGENT_THINKING_MS;
+}
+
 /** Text for the pill above the cat, or `null` when nothing is running. */
 export function agentPillText(tasks: AgentTask[], now: number, width: number): string | null {
   if (tasks.length === 0) return null;
@@ -93,19 +111,22 @@ export function agentPillText(tasks: AgentTask[], now: number, width: number): s
     const running = tasks.length - waiting.length;
     return `⏸ ${agentSourceLabel(waiting[0].source)} 等你确认${running > 0 ? ` · ${running} 个进行中` : ''}`;
   }
+  // The icon follows the freshest running task, the one the cat is acting out.
+  const freshest = tasks.reduce((a, b) => (b.lastEventMs >= a.lastEventMs ? b : a));
+  const icon = agentTaskThinking(freshest, now) ? '💭' : '⏳';
   if (tasks.length === 1) {
     const elapsed = formatAgentDuration(now - tasks[0].startedMs);
     const model = agentModelLabel(tasks[0].model);
     const steps = tasks[0].tools;
-    if (narrow) return ['⏳', model, steps ? `${steps}步` : '', elapsed].filter(Boolean).join(' ');
+    if (narrow) return [icon, model, steps ? `${steps}步` : '', elapsed].filter(Boolean).join(' ');
     const progress = [
       agentSourceLabel(tasks[0].source),
       model,
       steps ? `${steps} 步` : '',
     ].filter(Boolean);
-    return `⏳ ${progress.join(' · ')} · ${elapsed}`;
+    return `${icon} ${progress.join(' · ')} · ${elapsed}`;
   }
-  return narrow ? `⏳ ${tasks.length} 个` : `⏳ ${tasks.length} 个任务进行中`;
+  return narrow ? `${icon} ${tasks.length} 个` : `${icon} ${tasks.length} 个任务进行中`;
 }
 
 /** One-shot notice for a turn that just ended. Narrow windows drop the title, so the

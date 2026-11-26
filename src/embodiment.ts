@@ -1,11 +1,12 @@
 import { listen } from '@tauri-apps/api/event';
-import { AgentSnapshot, activeAgentTasks } from './agentStatus';
+import { AgentSnapshot, activeAgentTasks, agentTaskThinking } from './agentStatus';
 
 /**
  * Agent embodiment state machine: turns `kuro-agent-status` snapshots into the
- * cat's performance — working (fake-typing + tool bubbles), waiting (looks up at
- * the user), done (confetti / sigh), quiet (yawn). `agentStatus.ts` keeps owning
- * the pill and notices; this module only drives the acting.
+ * cat's performance — working (fake-typing + tool bubbles), thinking (paws rest,
+ * curious gaze), waiting (looks up at the user), done (confetti / sigh), quiet
+ * (yawn). `agentStatus.ts` keeps owning the pill and notices; this module only
+ * drives the acting.
  *
  * Arbitration (PRD 3.2): password privacy > the user's real input > agent acting.
  * One-shot performances (done/yawn) are skipped while the user is typing so the
@@ -15,6 +16,7 @@ import { AgentSnapshot, activeAgentTasks } from './agentStatus';
 /** The performance API both render engines expose (2D `KuroCatEngine`, 3D `KuroCatEngine3D`). */
 export interface EmbodimentEngine {
   setAgentWorking(active: boolean): void;
+  setAgentThinking(active: boolean): void;
   setAgentToolLabel(label: string): void;
   setAgentWaiting(active: boolean, tool?: string): void;
   triggerAgentDone(interrupted: boolean): void;
@@ -49,6 +51,7 @@ export function initEmbodiment(options: EmbodimentOptions): void {
   /** Tasks that already yawned in the current quiet stretch, `id -> lastEventMs` at the yawn. */
   const yawned = new Map<string, number>();
   let working = false;
+  let thinking = false;
   let waiting = false;
   let toolLabel = '';
 
@@ -58,6 +61,7 @@ export function initEmbodiment(options: EmbodimentOptions): void {
     for (const engine of [primary, secondary]) {
       if (!engine) continue;
       engine.setAgentWorking(working);
+      engine.setAgentThinking(thinking);
       engine.setAgentToolLabel(toolLabel);
       engine.setAgentWaiting(waiting, '');
     }
@@ -65,6 +69,7 @@ export function initEmbodiment(options: EmbodimentOptions): void {
 
   const stop = (): void => {
     working = false;
+    thinking = false;
     waiting = false;
     toolLabel = '';
     push();
@@ -93,13 +98,15 @@ export function initEmbodiment(options: EmbodimentOptions): void {
     const star = shown.reduce((a, b) => (b.lastEventMs >= a.lastEventMs ? b : a));
 
     working = !star.waiting;
-    toolLabel = star.waiting ? '' : star.lastTool;
+    thinking = !star.waiting && agentTaskThinking(star, now);
+    toolLabel = working && !thinking ? star.lastTool : '';
     waiting = star.waiting;
     push();
 
     if (star.waiting) return;
 
-    // One long silent command: a yawn, once per quiet stretch. A turn quiet past
+    // A long quiet stretch gets a yawn, once per stretch: while thinking the cat
+    // waits it out gazing curious, then gives up watching. A turn quiet past
     // AGENT_ACTIVE_MS fades out of `active` on its own — the cat rests until the
     // next tool event brings it back to the keyboard.
     const quietMs = now - star.lastEventMs;
