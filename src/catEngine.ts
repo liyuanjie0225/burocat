@@ -179,7 +179,7 @@ function colorWithAlpha(color: string, alpha: number): string {
 }
 
 interface CatFxParticle {
-  kind: 'bang' | 'dust' | 'z';
+  kind: 'bang' | 'dust' | 'z' | 'confetti';
   x: number;
   y: number;
   vx: number;
@@ -187,10 +187,16 @@ interface CatFxParticle {
   size: number;
   createdAt: number;
   lifetime: number;
+  /** Confetti only: spin angle in radians. */
+  rot?: number;
+  /** Confetti only: spin speed in radians/s. */
+  rotVel?: number;
+  /** Confetti only: paper color. */
+  color?: string;
 }
 
 interface IdleFidget {
-  kind: 'tilt' | 'ear' | 'slowBlink' | 'look' | 'tail';
+  kind: 'tilt' | 'ear' | 'slowBlink' | 'look' | 'tail' | 'yawn' | 'sigh';
   t0: number;
   dur: number;
   side: -1 | 1;
@@ -796,6 +802,19 @@ export class KuroCatEngine {
   private typingEnergy = 0;
   private lastAnyKeyAt = -10000;
 
+  // Agent embodiment (AI coworker acting): the cat fake-types while an agent works,
+  // looks up at the user while it waits, and celebrates when a turn finishes.
+  // Strikes deliberately never touch lastAnyKeyAt/recentKeyTimes/heldKeys so the
+  // "user real input always wins" arbitration stays driven by the human alone.
+  private agentWorking = false;
+  private agentToolLabel = '';
+  private agentWaiting = false;
+  private agentWaitBlend = 0;
+  private nextAgentStrikeAt = 0;
+  private lastToolBubbleAt = -10000;
+  /** Eye-close contribution from the current yawn/sigh fidget, computed in update(). */
+  private actEyeClose = 0;
+
   // Paws & continuous held-key tracking (Fixes #3)
   private leftPaw: PawState;
   private rightPaw: PawState;
@@ -1084,6 +1103,192 @@ export class KuroCatEngine {
     this.asleep = true;
     this.lastInputAt = now - 90_000;
     this.nextZAt = now + 400;
+  }
+
+  // ---- Agent embodiment (the cat acts out what an AI coding agent is doing) ----
+
+  /** While an AI agent works on a turn, the cat types on its own mini keyboard. */
+  public setAgentWorking(active: boolean): void {
+    if (this.agentWorking === active) return;
+    this.agentWorking = active;
+    if (active) {
+      const now = performance.now();
+      this.nextAgentStrikeAt = Math.min(this.nextAgentStrikeAt, now + 140);
+      this.wakeRendering(now);
+    }
+  }
+
+  /**
+   * The tool the turn ran most recently. Every call is a work beat: it queues a
+   * quick double-tap strike; a changed label also shows a tool-name bubble soon.
+   */
+  public setAgentToolLabel(label: string): void {
+    const changed = this.agentToolLabel !== label;
+    this.agentToolLabel = label;
+    if (!this.agentWorking) return;
+    const now = performance.now();
+    this.nextAgentStrikeAt = Math.min(this.nextAgentStrikeAt, now + 40);
+    if (changed) this.lastToolBubbleAt = Math.min(this.lastToolBubbleAt, now - 2200);
+    this.wakeRendering(now);
+  }
+
+  /** The agent needs the user: the cat stops typing and looks up at the person. */
+  public setAgentWaiting(active: boolean, tool = ''): void {
+    if (this.agentWaiting === active) return;
+    this.agentWaiting = active;
+    const now = performance.now();
+    this.wakeRendering(now);
+    if (!active || this.privacyMode) return;
+    if (this.asleep || this.sleepAmount > 0.45) this.wakeCat(now, 'gentle');
+    if (tool && this.showKeyBubbles) {
+      this.spawnBubble(`⏸ ${tool}`, false, this.kbCenterX, now);
+    }
+  }
+
+  /** A turn ended: happy bounce + confetti, or a soft sigh when interrupted. */
+  public triggerAgentDone(interrupted: boolean): void {
+    const now = performance.now();
+    this.agentWorking = false;
+    this.agentWaiting = false;
+    this.nextAgentStrikeAt = 0;
+    if (this.privacyMode || this.asleep) return;
+    this.wakeRendering(now);
+    if (interrupted) {
+      this.idleAct = { kind: 'sigh', t0: now, dur: 1500, side: 1 };
+      if (this.showKeyBubbles) this.spawnBubble('💨', false, this.kbCenterX, now);
+      return;
+    }
+    this.isCross = false;
+    this.annoy = 0;
+    this.curiousUntil = now + 1200;
+    this.curiousSpring.kick(2.4);
+    this.squashSpring.kick(2.1);
+    this.deskHopSpring.kick(-26);
+    this.spawnConfetti(now);
+  }
+
+  /** The agent has been quiet a while (one long command): sleepy yawn. */
+  public triggerAgentYawn(): void {
+    const now = performance.now();
+    if (this.privacyMode || this.asleep || this.idleAct) return;
+    this.idleAct = { kind: 'yawn', t0: now, dur: 1700, side: 1 };
+    this.wakeRendering(now);
+  }
+
+  /** Sleep state for the caller to consult; mirrors the 3D engine's getSleepStatus. */
+  public getSleepStatus(): { asleep: boolean; sleepAmt: number } {
+    return { asleep: this.asleep, sleepAmt: this.sleepAmount };
+  }
+
+  /** One fake keystroke on the mini keyboard: paw poke + keycap press + tool bubble. */
+  private agentStrike(now: number): void {
+    const vk = Math.random() < 0.15 ? 32 : 65 + Math.floor(Math.random() * 26);
+    const spec = resolveKeyByVk(vk, this.keyboardLayout);
+    if (!spec) return;
+    if (this.asleep || this.sleepAmount > 0.45) {
+      this.wakeCat(now, 'abrupt'); // waking the cat for the agent can trigger 起床气
+    } else {
+      this.lastInputAt = now; // a working cat never dozes off mid-shift
+    }
+    const anim = this.keyAnims.get(spec.id);
+    if (anim) {
+      anim.pressed = false; // no real keyUp will come; let the press decay
+      anim.pressAmount = 1;
+      anim.lastHitAt = now;
+    }
+
+    if (this.catBreed === 'dafeiyu') {
+      const pt = this.getKeyWorldCenter(spec);
+      this.dafeiyu.onKeyDown(vk, pt, this.buildDaFeiYuLayout(), false, false);
+      this.spawnAgentToolBubble(now, pt.x);
+      return;
+    }
+
+    this.bodyBob = Math.min(1.15, this.bodyBob + 0.5);
+    this.kbBounce = Math.min(1, this.kbBounce + 0.32);
+    this.squashSpring.kick(1.35);
+
+    const layout = getKeyboardLayout(this.keyboardLayout);
+    const isCatFacing = this.keyboardOrientation === 'cat';
+    const keyColCenter = spec.uStart + spec.uWidth * 0.5;
+    const screenKeyCol = isCatFacing ? layout.totalUnits - keyColCenter : keyColCenter;
+    const midCol = layout.totalUnits * 0.5;
+    this.lastKeyBias = Math.max(-1, Math.min(1, (screenKeyCol - midCol) / (layout.totalUnits * 0.34)));
+    this.typingGroovePhase += 1.22;
+
+    let targetPoint = this.getKeyWorldCenter(spec);
+    let chosen: PawState;
+    const splitCol = this.keyboardLayout === '108' ? (isCatFacing ? 12.2 : 8.4) : 7.5;
+    if (spec.id === 'space') {
+      this.lastSpacePaw = this.lastSpacePaw === 'left' ? 'right' : 'left';
+      chosen = this.lastSpacePaw === 'left' ? this.leftPaw : this.rightPaw;
+      const spaceU = isCatFacing
+        ? chosen.side === 'left'
+          ? spec.uStart + spec.uWidth * 0.68
+          : spec.uStart + spec.uWidth * 0.32
+        : chosen.side === 'left'
+          ? spec.uStart + spec.uWidth * 0.32
+          : spec.uStart + spec.uWidth * 0.68;
+      const rY = spec.rowY ?? spec.row;
+      targetPoint = this.projectKeyboardPoint(spaceU, rY + 0.5);
+    } else if (screenKeyCol < splitCol) {
+      chosen = this.leftPaw;
+    } else {
+      chosen = this.rightPaw;
+    }
+
+    const sideSign = chosen.side === 'left' ? -1 : 1;
+    this.strikeRockVel += sideSign * (1.35 + this.typingEnergy * 0.9);
+    this.headTiltSpring.kick(sideSign * 0.34);
+    this.typingSwayVel += (this.lastKeyBias * 1.5 + Math.cos(this.typingGroovePhase) * 1.1) * 0.8;
+
+    if (chosen.mode === 'curled' || chosen.mode === 'idle') {
+      const startPt = this.getLiveCurledPawPos(chosen, 0);
+      chosen.pos = { x: startPt.x, y: startPt.y };
+      chosen.vel = { x: 0, y: 0 };
+    }
+    const clampedTarget = this.clampToKeyboardSurface(targetPoint);
+    chosen.mode = 'poke';
+    chosen.target = clampedTarget;
+    chosen.pokeTime = 0;
+    chosen.impactSquash = 0.8;
+    chosen.lastActiveAt = now;
+    const other = chosen.side === 'left' ? this.rightPaw : this.leftPaw;
+    if (other.mode === 'idle') {
+      other.mode = 'curled';
+      other.lastActiveAt = now;
+    }
+
+    this.spawnAgentToolBubble(now, targetPoint.x);
+  }
+
+  /** Tool-name bubble while the agent works (throttled so fast turns don't spam). */
+  private spawnAgentToolBubble(now: number, keyX: number): void {
+    if (!this.showKeyBubbles || this.privacyMode || !this.agentToolLabel) return;
+    if (now - this.lastToolBubbleAt < 2200) return;
+    this.lastToolBubbleAt = now;
+    this.spawnBubble(this.agentToolLabel, false, keyX, now);
+  }
+
+  /** Celebration confetti burst above the cat's head. */
+  private spawnConfetti(now: number): void {
+    const headPt = this.spinePoint(0.18, 0);
+    const colors = ['#fbbf24', '#f472b6', '#38bdf8', '#4ade80', '#fb7185', '#a78bfa'];
+    for (let i = 0; i < 26; i++) {
+      this.fxParticles.push({
+        kind: 'confetti',
+        x: headPt.x + (Math.random() - 0.5) * 130,
+        y: headPt.y - 30 - Math.random() * 34,
+        vx: (Math.random() - 0.5) * 150,
+        vy: -70 - Math.random() * 120,
+        size: 3.2 + Math.random() * 2.6,
+        createdAt: now,
+        lifetime: 1400 + Math.random() * 600,
+        rot: Math.random() * Math.PI * 2,
+        rotVel: (Math.random() - 0.5) * 11,
+        color: colors[i % colors.length],
+      });
+    }
   }
 
   // ---- Flexible spine coordinate system (exact match to measured 0.3s -> 2.2s shear!) ----
@@ -1814,6 +2019,7 @@ export class KuroCatEngine {
       !this.asleep &&
       !this.privacyMode &&
       !this.isCross &&
+      this.agentWaitBlend < 0.5 &&
       now - this.lastAnyKeyAt > 900;
     if (canTriggerCurious && this.pointerSamples.length >= 4 && pointerSpeed > 0.92) {
       this.curiousUntil = Math.max(this.curiousUntil, now + 2200);
@@ -1875,6 +2081,8 @@ export class KuroCatEngine {
         slowBlink: 1450,
         look: 2100,
         tail: 1100,
+        yawn: 1700, // only ever force-triggered (agent quiet), never randomly picked
+        sigh: 1500, // only ever force-triggered (turn interrupted), never randomly picked
       };
       this.idleAct = {
         kind,
@@ -1892,11 +2100,43 @@ export class KuroCatEngine {
       return t * t * (3 - 2 * t);
     };
     const actEnv = act ? smoothstep(0, 0.25, actU) * (1 - smoothstep(0.7, 1, actU)) : 0;
+    // Yawn squeezes the eyes shut; a sigh only lowers heavy lids halfway.
+    this.actEyeClose =
+      act && act.kind === 'yawn' ? actEnv * 0.97 : act && act.kind === 'sigh' ? actEnv * 0.48 : 0;
+    const fidgetEarDroop =
+      act && (act.kind === 'yawn' || act.kind === 'sigh')
+        ? actEnv * (act.kind === 'sigh' ? 0.42 : 0.34)
+        : 0;
+
+    // Agent embodiment: while an AI agent works, the cat fake-types on its own mini
+    // keyboard. Real user input always wins — strikes pause while the user types or
+    // holds the mouse — and privacy mode pauses everything.
+    if (this.agentWorking && !this.agentWaiting && !this.privacyMode) {
+      if (this.asleep || this.sleepAmount > 0.45) {
+        this.wakeCat(now, 'abrupt'); // waking for the agent can trigger 起床气 naturally
+      }
+      const userActive =
+        isTypingRecently ||
+        this.mouseLeftDown ||
+        this.mouseRightDown ||
+        now - this.lastMouseMoveAt < 320;
+      if (!this.asleep && now >= this.nextAgentStrikeAt && !userActive) {
+        this.agentStrike(now);
+        this.nextAgentStrikeAt = now + 700 + Math.random() * 1100;
+      }
+    }
 
     // 2) Staggered 240Hz spring posture (body & hunch follow a beat behind head & eyes!)
-    const targetHunch = isTypingRecently
-      ? 0.45 + this.typingEnergy * 0.55
-      : curiousClamped * 0.28;
+    // Agent working gets a steady typing hunch; a sigh slumps; waiting sits the cat
+    // upright so it can look up at the person it is waiting on.
+    const sighSlump = act && act.kind === 'sigh' ? actEnv * 0.42 : 0;
+    const agentHunch =
+      this.agentWorking && !this.agentWaiting && !this.asleep && !this.privacyMode ? 0.4 : 0;
+    const targetHunch =
+      ((isTypingRecently ? 0.45 + this.typingEnergy * 0.55 : curiousClamped * 0.28) +
+        agentHunch +
+        sighSlump) *
+      (1 - this.agentWaitBlend * 0.75);
     this.typingHunch = Math.max(0, Math.min(1.2, this.hunchSpring.step(targetHunch, dt)));
     this.squashSpring.step(this.sleepAmount * 0.35 - curiousClamped * 0.25, dt);
 
@@ -1978,7 +2218,8 @@ export class KuroCatEngine {
         0.16 * curiousClamped -
         0.18 * this.squintAmount -
         0.58 * this.crossAmount -
-        0.12 * this.sleepAmount
+        0.12 * this.sleepAmount -
+        fidgetEarDroop
       : 0;
     this.earPerkSpring.step(earTarget, dt);
 
@@ -2069,7 +2310,7 @@ export class KuroCatEngine {
       });
     }
 
-    // Update FX particles (impact starburst, dust puffs, sleep Zzz)
+    // Update FX particles (impact starburst, dust puffs, sleep Zzz, celebration confetti)
     for (let i = this.fxParticles.length - 1; i >= 0; i--) {
       const fx = this.fxParticles[i];
       if (now - fx.createdAt >= fx.lifetime) {
@@ -2081,6 +2322,11 @@ export class KuroCatEngine {
       if (fx.kind === 'dust') {
         fx.vx *= Math.exp(-2.2 * dt);
         fx.vy *= Math.exp(-1.5 * dt);
+      } else if (fx.kind === 'confetti') {
+        // Paper flutter: gravity pulls down, air drag slows, spin keeps tumbling.
+        fx.vy += 340 * dt;
+        fx.vx *= Math.exp(-0.6 * dt);
+        fx.rot = (fx.rot ?? 0) + (fx.rotVel ?? 0) * dt;
       }
     }
 
@@ -2090,6 +2336,8 @@ export class KuroCatEngine {
       (curiousNow ||
         this.crossAmount > 0.03 ||
         this.idleAct !== null ||
+        this.agentWorking ||
+        this.agentWaitBlend > 0.02 ||
         this.fxParticles.some((fx) => fx.kind !== 'z') ||
         (this.sleepAmount > 0.02 && this.sleepAmount < 0.98) ||
         (wakeElapsed >= 0 && wakeElapsed < 0.65) ||
@@ -2139,6 +2387,15 @@ export class KuroCatEngine {
       // Stable huffy side-glance (locked direction -> zero sudden left/right snap when cursor crosses center!)
       const huffX = this.crossHuffDir * 0.72 * this.crossAmount;
       targetGazeX = targetGazeX * (1 - this.crossAmount * 0.62) + huffX * 0.62;
+    }
+    // Agent embodiment: while an agent waits on the user, the cat sits up and looks
+    // up at the person (below privacy & cross in priority, above curious).
+    const agentWaitTarget =
+      this.agentWaiting && !this.asleep && !this.privacyMode && this.crossAmount < 0.3 ? 1 : 0;
+    this.agentWaitBlend += (agentWaitTarget - this.agentWaitBlend) * (1 - Math.exp(-7.5 * dt));
+    if (this.agentWaitBlend > 0.015) {
+      targetGazeX = targetGazeX * (1 - this.agentWaitBlend) + gx * 0.35 * this.agentWaitBlend;
+      targetGazeY = targetGazeY * (1 - this.agentWaitBlend) - 0.62 * this.agentWaitBlend;
     }
     this.eyeLookX = Math.max(-1.05, Math.min(1.05, this.eyeXSpring.step(targetGazeX, dt)));
     this.eyeLookY = Math.max(-1.05, Math.min(1.05, this.eyeYSpring.step(targetGazeY, dt)));
@@ -2455,6 +2712,13 @@ export class KuroCatEngine {
         ctx.strokeText('Z', 0, 0);
         ctx.fillStyle = '#fbfaf3';
         ctx.fillText('Z', 0, 0);
+      } else if (fx.kind === 'confetti') {
+        // Celebration paper: tiny tumbling color rectangle that fades as it falls.
+        ctx.globalAlpha = Math.max(0, 1 - u * u);
+        ctx.translate(fx.x, fx.y);
+        ctx.rotate(fx.rot ?? 0);
+        ctx.fillStyle = fx.color ?? '#fbbf24';
+        ctx.fillRect(-fx.size * 0.5, -fx.size * 0.8, fx.size, fx.size * 1.6);
       }
       ctx.restore();
     }
@@ -3070,6 +3334,22 @@ export class KuroCatEngine {
 
     const wShift = this.faceTurnX * 0.72;
 
+    // Sleepy big yawn mouth while the yawn fidget plays (agent quiet too long)
+    const yawnAct = this.idleAct && this.idleAct.kind === 'yawn' ? this.idleAct : null;
+    if (yawnAct) {
+      const yu = Math.max(0, Math.min(1, (performance.now() - yawnAct.t0) / yawnAct.dur));
+      const yawnOpen = Math.sin(yu * Math.PI);
+      if (yawnOpen > 0.15) {
+        ctx.fillStyle = 'rgba(146, 84, 96, 0.95)';
+        ctx.strokeStyle = 'rgba(58, 54, 62, 0.55)';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.ellipse(wShift, 18.4, 1.4 + 4.6 * yawnOpen, 1.2 + 6.4 * yawnOpen, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
     // 4) Ragdoll rosy petting blush + adorable tiny pink nose & gentle kitten smile!
     if (isRagdoll) {
       if (this.squintAmount > 0.12) {
@@ -3327,7 +3607,7 @@ export class KuroCatEngine {
         ? 0.92 * Math.sin(Math.max(0, Math.min(1, (nowEye - this.idleAct.t0) / this.idleAct.dur)) * Math.PI)
         : 0;
     const blinkVal = Math.max(this.isBlinking ? 1 - Math.abs(this.blinkProgress - 1) : 0, slowBlinkVal);
-    const closedness = Math.max(blinkVal, this.squintAmount * 0.85, this.privacyClose, this.sleepAmount);
+    const closedness = Math.max(blinkVal, this.squintAmount * 0.85, this.privacyClose, this.sleepAmount, this.actEyeClose);
     const curious = Math.min(1, this.curiousAmount);
     const cross = this.crossAmount;
 
@@ -4875,7 +5155,7 @@ export class KuroCatEngine {
         ? 0.92 * Math.sin(Math.max(0, Math.min(1, (nowEye - this.idleAct.t0) / this.idleAct.dur)) * Math.PI)
         : 0;
     const blinkVal = Math.max(this.isBlinking ? 1 - Math.abs(this.blinkProgress - 1) : 0, slowBlinkVal);
-    const closedness = Math.max(blinkVal, this.squintAmount * 0.85, this.privacyClose, this.sleepAmount);
+    const closedness = Math.max(blinkVal, this.squintAmount * 0.85, this.privacyClose, this.sleepAmount, this.actEyeClose);
     const curious = Math.min(1, this.curiousAmount);
     const cross = this.crossAmount;
     const eyeXs = [cx - 23.0, cx + 23.0];
