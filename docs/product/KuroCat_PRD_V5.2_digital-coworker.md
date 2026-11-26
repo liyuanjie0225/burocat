@@ -117,9 +117,12 @@ flowchart TD
 stateDiagram-v2
     [*] --> idle
     idle --> working : session_start / 首个 tool_used
+    working --> thinking : 静默 ≥6s 且无进行中工具<br/>（模型生成间隙）
+    thinking --> working : 下一 tool_used / tool_started
     working --> waiting : 权限确认请求
     waiting --> working : 用户已答复<br/>（UserPromptSubmit 或输入启发式）
     working --> done : Stop
+    thinking --> done : Stop
     waiting --> done : 超时 / 中断
     done --> idle : 通知展示 5s 后
     idle --> sleeping : 无任务且无键鼠 5 分钟
@@ -248,7 +251,7 @@ flowchart TD
 |--------|------|------|------|--------|
 | source | String | 是 | 适配器 id | `claude-code` |
 | session_id | String | 是 | agent 会话标识 | `cc-3f2a…` |
-| kind | Enum | 是 | session_start / tool_used / waiting / answered / done / interrupted | `tool_used` |
+| kind | Enum | 是 | session_start / tool_used / tool_started / waiting / answered / done / interrupted | `tool_used` |
 | tool_name | String | 否 | kind=tool_used/waiting 时提供 | `Edit` |
 | model | String | 否 | kind=session_start 时提供 | `claude-sonnet-4-6` |
 | ts | i64 | 是 | 毫秒时间戳 | `1764…` |
@@ -258,6 +261,7 @@ Claude Code 原生事件 → 统一事件映射：
 | Claude Code hook 事件 | 统一事件 kind | 说明 |
 |----------------------|--------------|------|
 | SessionStart | session_start | 携带 model |
+| PreToolUse | tool_started | 携带 tool_name；区分"工具在跑"与"思考间隙"，长命令不算思考 |
 | PostToolUse | tool_used | 携带 tool_name |
 | Notification（permission） | waiting | 携带被审批 tool_name |
 | UserPromptSubmit | answered | 明确信号，替代输入启发式 |
@@ -300,7 +304,8 @@ README 增加「接入一个新 Agent」章节：声明 adapter（source id / �
 | Agent 状态 | 猫的行为 | 键帽气泡 | 时长/退出 |
 |-----------|---------|---------|----------|
 | working（有活跃任务） | 在迷你键盘敲击，每个 tool_used 触发 2-4 次敲击 burst；节奏随事件频率自适应 | 显示最近工具名（`Bash` / `Edit` / `Write`…） | 状态机驱动 |
-| working 静默 >90s（长命令） | 敲击渐慢→趴下打哈欠 | 气泡淡出 | 下一事件恢复敲击 |
+| thinking（静默 ≥6s 且无进行中工具） | 停手、好奇凝视（瞳孔放大/竖耳/歪头），哈欠后仍回凝视；被打断→生气仍优先 | 💭（入态一次） | 下一事件 ≤1s 回敲击；静默 >90s 打哈欠一次 |
+| working 静默 >90s 且有进行中工具（长命令） | 继续敲击（工具在跑就是忙），90s 打哈欠 | 气泡淡出 | 下一事件恢复敲击 |
 | waiting | 停手、抬头看向观众方向 | ⏸ + 工具名 | 用户答复后 1s 内收回目光 |
 | done | 挥手小跳庆祝（短，≤1.2s） | ✨ | 完成通知展示后 5s 回 idle |
 | interrupted | 叹气/耳朵耷拉 | 💤→❗ | 同 done |
@@ -438,7 +443,8 @@ v5.2 无新增持久化（任务表内存态）。**[待确认]** v5.3 工位日
 | working 演出 | tool_used 到达后 ≤1s 猫开始敲击，气泡显示工具名 | P0 |
 | waiting 演出 | permission 请求后 ≤1s 猫抬头 + ⏸；答复后 ≤1s 恢复 | P0 |
 | 用户优先仲裁 | 猫演绎 agent 时用户敲键，敲键动画立即让位，pill 不变 | P0 |
-| 长命令 | 90s 无事件猫打哈欠；下一事件立即恢复敲击 | P1 |
+| thinking 演出 | 静默 ≥6s 且无进行中工具，猫 ≤1s 停手进入好奇凝视 + 💭 气泡；下一事件 ≤1s 恢复敲击 | P1 |
+| 长命令不误判 | tool_started 后长时间静默猫**继续敲击**（不进入思考态）；90s 无事件猫打哈欠；下一事件立即恢复敲击 | P1 |
 | 起床气联动 | 猫睡觉中 agent 开工 → 播放起床气 2s 后进入工作演出；摸头可消气 | P1 |
 | done 庆祝 | Stop 事件触发庆祝 ≤1.2s，随后完成通知；interrupted 为叹气变体 | P0 |
 | MCP 工具 | Claude Desktop 调用 `pet_celebrate` 猫庆祝；`pet_say` 气泡 6s 自动消失；超频返回 rate_limited | P0 |

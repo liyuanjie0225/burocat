@@ -17,6 +17,8 @@
 | A4 | 无硬性 deadline，无合规约束 | 开源节奏 |
 | A5 | 产品红线：**轻量、零外部依赖、绝不为打扰而抢焦点、本地隐私** | README 既有哲学（内存瘦身、30FPS 省电、密码防偷窥） |
 
+> **修订（2026-11-26）**：A3 为市场假设；作者本人常用工具栈为 **ZCode + Cursor（未来可能 Codex）**，不用 Claude Code / 豆包。自用优先阶段按 [decisions.md](./decisions.md) D5–D7 执行：R6 升为第一优先、R1a-lite 挂起、Codex 调研推迟。
+
 **赛道判断**（2026-11 调研）：桌宠正从「桌面装饰」转向 **ambient agent observability（环境化 Agent 状态感知）**。OpenAI Codex desktop pets、agentpet（监测 Claude Code/Codex/Cursor 并随编码成长）、OpenPets 均已出现。但它们都是「widget/像素宠物 + 状态浮窗」，**没有一家具备「打字动画引擎 + 皮肤系统 + OBS 直播源 + 内置 MCP」的组合**。KuroCat 的机会：**让猫把 agent 的行为具身化演出来，而不只是显示一个状态条**。
 
 ---
@@ -26,7 +28,7 @@
 | ID | 需求名称 | 描述 | 目标用户 | 预估工作量 | 状态 |
 |----|---------|------|---------|-----------|------|
 | R1 | 多 Agent 通用接入 | 把 ZCode hooks 模式抽成 Agent 适配器，接入 Claude Code（一期）、Codex / Gemini CLI（二期） | 所有 coding agent 用户 | M（~2周） | 新需求 |
-| R2 | 拟宠化行为引擎（数字工位同事） | agent 干活→猫替它敲迷你键盘；等确认→猫抬头提醒；完成→庆祝；被打断→叹气；全空闲→睡觉，agent 半夜开工触发起床气 | agent 用户（全量可见） | M（~1周） | 新需求 |
+| R2 | 拟宠化行为引擎（数字工位同事） | agent 干活→猫替它敲迷你键盘；思考→停手好奇凝视（💭）；等确认→猫抬头提醒；完成→庆祝；被打断→叹气；全空闲→睡觉，agent 半夜开工触发起床气 | agent 用户（全量可见） | M（~1周） | 新需求 |
 | R3 | 一键聚焦 Agent 窗口 | 点进度 pill/猫 → 聚焦对应终端窗口 | 多窗口并行用户 | S（~1周） | 新需求 |
 | R4 | 编码成长系统 | 打字+agent 协作时长攒 XP，等级解锁配饰 | 留存向 | L（~3周） | 新需求 |
 | R5 | 猫的工位日记 | 每日任务数/时长/模型分布/streak，拟人化文案呈现 | 留存向 | S（~1.5周） | 新需求 |
@@ -173,3 +175,5 @@ upstream qianyiai 在 v5.1.2 发布了 **AI Companion**（`src/agentCompanion.ts
 - 完整拟宠化演出（等待抬头看用户、撒花、叹气、哈欠、起床气、用户优先仲裁、隐私优先）——上游敲键直接写 `onKeyDown` 会污染用户优先判定，我们的 `agentStrike` 不碰 `lastAnyKeyAt/strokes`
 
 **R1a 的含义变化**：原计划的「Claude Code 适配器」不必从零做——**把上游 companion 的 `kuro-agent-event` 事件流桥接进我们的 embodiment 状态机**（status: working/waiting/done/error → 相位映射），即可让上游已覆盖的全部客户端立刻获得完整拟宠化演出。工作量从 ~2 周降到 ~2-3 天，且天然解决两套 pill（`.agent-pill` vs `.agent-bubble`）的 UI 并存问题（可考虑统一收敛）。
+
+> **评审后决策（2026-11-26）**：选择性同步上游 / R1a-lite 升为下一步 / companion 桥接降为可选 / 上游 PR 策略，详见 [decisions.md](./decisions.md) D1–D4。
