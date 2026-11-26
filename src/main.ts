@@ -11,6 +11,7 @@ import {
 import { catAudio } from './audio';
 import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
 import { initAgentStatus } from './agentStatus';
+import { initEmbodiment } from './embodiment';
 import {
   getKeyboardLayout,
   resolveKeyByVk,
@@ -56,6 +57,7 @@ interface AppSettings {
   headphoneMode?: HeadphoneMode;
   agentStatusEnabled: boolean;
   agentHookAutoInstall: boolean;
+  agentEmbodimentEnabled?: boolean;
   fpsCap?: number;
   language?: string;
 }
@@ -1141,6 +1143,18 @@ async function bootstrap(): Promise<void> {
       engine.triggerCuriousDemo();
       engine3d?.triggerCuriousDemo();
     },
+  });
+
+  // Agent embodiment: the cat acts out what the agent does (typing, waiting,
+  // celebrating). Driven by the same snapshots; disabled whenever the agent
+  // status feature itself is off, so legacy settings inherit cleanly.
+  initEmbodiment({
+    isEnabled: () => settings.agentStatusEnabled && settings.agentEmbodimentEnabled !== false,
+    isPrivacyActive: () => privacyActive,
+    getEngines: () =>
+      active3d && engine3d
+        ? { primary: engine3d, secondary: engine }
+        : { primary: engine, secondary: engine3d ?? null },
   });
 
   let lastPetHover = false;

@@ -37,6 +37,8 @@ export interface AgentTask {
   tool: string;
   /** Tool calls finished so far in the turn. */
   tools: number;
+  /** The tool the turn ran most recently (embodiment tool bubbles). */
+  lastTool: string;
   startedMs: number;
   lastEventMs: number;
 }
