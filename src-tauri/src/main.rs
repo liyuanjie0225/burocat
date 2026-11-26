@@ -11,5 +11,9 @@ fn main() {
         kuro_cat_pet_lib::run_mcp_stdio();
         return;
     }
+    if args.iter().any(|a| a == "--hook") {
+        kuro_cat_pet_lib::run_hook_cli(&args);
+        return;
+    }
     kuro_cat_pet_lib::run();
 }

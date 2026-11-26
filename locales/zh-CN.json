@@ -67,6 +67,8 @@
     "toggle_agent_embodiment_title": "AI 干活时猫替它敲键盘、等确认时抬头看你、完成时撒花庆祝",
     "agent_hook": "自动接入 ZCode",
     "agent_hook_title": "把状态 Hook 写入 ZCode 配置（只增删 KuroCat 自己的条目），关闭即原样还原",
+    "copy_hooks": "发给 AI 自动配置",
+    "hooks_hint": "写代码提醒",
     "copied_hint": "已复制 ✓",
     "created_hint": "已创建 ✓",
     "desktop_shortcut": "创建桌面图标",

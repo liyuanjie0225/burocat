@@ -67,6 +67,8 @@
     "toggle_agent_embodiment_title": "AI が作業中は猫が代わりにタイピングし、確認が必要な時はあなたを見上げ、完了時には紙吹雪でお祝いします",
     "agent_hook": "ZCode へ自動接続",
     "agent_hook_title": "ステータス Hook を ZCode 設定に書き込みます（KuroCat 自身のエントリのみ）。オフにすると元に戻ります",
+    "copy_hooks": "AI 自動設定コピー",
+    "hooks_hint": "作業通知",
     "copied_hint": "コピー済 ✓",
     "created_hint": "作成済 ✓",
     "desktop_shortcut": "デスクトップアイコン作成",

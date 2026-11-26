@@ -67,6 +67,8 @@
     "toggle_agent_embodiment_title": "While the agent works the cat types for it, looks up at you when it needs confirmation, and celebrates with confetti when done",
     "agent_hook": "Auto-hook into ZCode",
     "agent_hook_title": "Writes the status hook into the ZCode config (only KuroCat's own entries), restored byte-for-byte when off",
+    "copy_hooks": "AI Setup Prompt",
+    "hooks_hint": "AI Companion",
     "copied_hint": "Copied ✓",
     "created_hint": "Created ✓",
     "desktop_shortcut": "Create Desktop Shortcut",

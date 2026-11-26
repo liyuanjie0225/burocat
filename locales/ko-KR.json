@@ -67,6 +67,8 @@
     "toggle_agent_embodiment_title": "AI가 작업하는 동안 고양이가 대신 타이핑하고, 확인이 필요하면 당신을 올려다보며, 완료되면 색종이 축하를 합니다",
     "agent_hook": "ZCode 자동 연동",
     "agent_hook_title": "상태 Hook을 ZCode 설정에 기록합니다 (KuroCat 자체 항목만). 끄면 원래대로 복원됩니다",
+    "copy_hooks": "AI 자동 설정 복사",
+    "hooks_hint": "코딩 알림",
     "copied_hint": "복사됨 ✓",
     "created_hint": "생성됨 ✓",
     "desktop_shortcut": "바탕화면 바로가기 만들기",
