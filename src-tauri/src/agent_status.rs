@@ -182,6 +182,8 @@ pub struct AgentTask {
     pub tool: String,
     /// Tool calls finished so far in this turn: the only progress an agent reports.
     pub tools: u32,
+    /// The tool the turn ran most recently, so the pet can show it while working.
+    pub last_tool: String,
     pub started_ms: u64,
     pub last_event_ms: u64,
 }
@@ -248,6 +250,7 @@ fn new_task(event: &AgentEvent, now: u64) -> AgentTask {
         waiting: false,
         tool: String::new(),
         tools: 0,
+        last_tool: String::new(),
         started_ms: now,
         last_event_ms: now,
     }
@@ -280,6 +283,7 @@ impl AgentRegistry {
                 task.waiting = false;
                 task.tool.clear();
                 task.tools = 0;
+                task.last_tool.clear();
                 task.started_ms = now;
                 task.last_event_ms = now;
                 if !event.label.is_empty() {
@@ -296,6 +300,9 @@ impl AgentRegistry {
                     task.waiting = false;
                     task.tool.clear();
                     task.tools = task.tools.saturating_add(1);
+                    if !event.tool.is_empty() {
+                        task.last_tool = event.tool.clone();
+                    }
                     task.last_event_ms = now;
                 }
                 None

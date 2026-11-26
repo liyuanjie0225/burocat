@@ -70,6 +70,12 @@ fn default_agent_hook_auto_install() -> bool {
     true
 }
 
+/// The cat acts out what the agent is doing (typing, waiting, celebrating); on by
+/// default, but only runs while `agent_status_enabled` is on as well.
+fn default_agent_embodiment_enabled() -> bool {
+    true
+}
+
 pub fn normalize_headphone_mode(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "auto" => "auto".to_string(),
@@ -217,6 +223,8 @@ pub struct AppSettings {
     pub agent_status_enabled: bool,
     #[serde(default = "default_agent_hook_auto_install")]
     pub agent_hook_auto_install: bool,
+    #[serde(default = "default_agent_embodiment_enabled")]
+    pub agent_embodiment_enabled: bool,
     #[serde(default = "default_fps_cap")]
     pub fps_cap: u16,
     #[serde(default = "default_language")]
@@ -254,6 +262,7 @@ impl Default for AppSettings {
             headphone_mode: default_headphone_mode(),
             agent_status_enabled: default_agent_status_enabled(),
             agent_hook_auto_install: default_agent_hook_auto_install(),
+            agent_embodiment_enabled: default_agent_embodiment_enabled(),
             fps_cap: default_fps_cap(),
             language: default_language(),
         }
@@ -566,6 +575,7 @@ mod tests {
         let parsed: AppSettings = serde_json::from_str(LEGACY_SETTINGS_JSON).expect("legacy json should parse");
         assert!(parsed.agent_status_enabled);
         assert!(parsed.agent_hook_auto_install);
+        assert!(parsed.agent_embodiment_enabled);
     }
 
     const LEGACY_SETTINGS_JSON: &str = r#"{

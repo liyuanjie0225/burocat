@@ -35,6 +35,7 @@ interface AppSettings {
   obsHidePet: boolean;
   agentStatusEnabled: boolean;
   agentHookAutoInstall: boolean;
+  agentEmbodimentEnabled?: boolean;
   renderMode?: '2d' | '3d';
   collarColor?: 'none' | 'red' | 'blue' | 'pink' | 'green';
   headphoneMode?: 'auto' | 'on' | 'off';
@@ -91,6 +92,7 @@ let settings: AppSettings = {
   obsHidePet: false,
   agentStatusEnabled: true,
   agentHookAutoInstall: true,
+  agentEmbodimentEnabled: true,
   renderMode: '3d',
   collarColor: 'none',
   headphoneMode: 'off',
@@ -115,6 +117,7 @@ const tailModeBadgeEl = document.getElementById('tail-mode-badge') as HTMLSpanEl
 const tailKeysCountEl = document.getElementById('tail-keys-count') as HTMLSpanElement;
 const btnObsHideEl = document.getElementById('btn-obs-hide') as HTMLButtonElement;
 const btnAgentHookEl = document.getElementById('btn-agent-hook') as HTMLButtonElement | null;
+const btnAgentEmbodimentEl = document.getElementById('btn-agent-embodiment') as HTMLButtonElement | null;
 const btnCheckUpdateEl = document.getElementById('btn-check-update') as HTMLButtonElement | null;
 
 function agentHookHintText(info: AgentHookInfo): string {
@@ -234,9 +237,13 @@ function syncUI(): void {
   setCheck('chk-obs-hide', Boolean(settings.obsEnabled && settings.obsHidePet));
   setCheck('chk-agent', settings.agentStatusEnabled);
   setCheck('chk-agent-hook', settings.agentHookAutoInstall);
+  setCheck('chk-agent-embodiment', settings.agentEmbodimentEnabled !== false);
 
   if (btnAgentHookEl) {
     btnAgentHookEl.classList.toggle('hidden', !settings.agentStatusEnabled);
+  }
+  if (btnAgentEmbodimentEl) {
+    btnAgentEmbodimentEl.classList.toggle('hidden', !settings.agentStatusEnabled);
   }
 
   if (btnObsHideEl) {
@@ -690,6 +697,11 @@ async function bootstrap(): Promise<void> {
         void applySettingsPatch({ agentStatusEnabled: !settings.agentStatusEnabled }).then(
           refreshAgentHookHint,
         );
+        break;
+      case 'toggle-agent-embodiment':
+        void applySettingsPatch({
+          agentEmbodimentEnabled: settings.agentEmbodimentEnabled === false,
+        });
         break;
       case 'toggle-agent-hook':
         void applySettingsPatch({ agentHookAutoInstall: !settings.agentHookAutoInstall }).then(
