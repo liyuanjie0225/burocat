@@ -160,3 +160,16 @@
 2. **本地历史数据层**：agent_status 目前内存态，是 R5/R8/R4 的共同地基
 3. **用户反馈闭环**：GitHub issue 模板加「Agent 状态功能」标签 + 官网一个反馈入口，让 R2 验证有数据可依
 4. **传播素材**：R2 上线时录一支「猫替 Claude Code 敲键盘」短视频——这个功能天生适合传播，README 首图/官网首屏同步替换
+
+---
+
+## 5. 上游动态：v5.1.2 已内置简化版「AI Companion」（2026-11-26 合并时发现）
+
+upstream qianyiai 在 v5.1.2 发布了 **AI Companion**（`src/agentCompanion.ts` + `mcp.rs` 的 `POST /hook` 桥）：豆包/WorkBuddy/DeepSeek/Codex/千问/Antigravity/Claude Code 等客户端通过 HTTP 上报 `working/thinking/waiting/done/error` 状态，驱动 `.agent-bubble` 气泡 + 简单敲键（直接调 `onKeyDown`）。**与我们的 R1/R2 部分撞车**。
+
+**我们已保有的差异化**：
+- 零配置自动安装 hooks（read-merge-atomic + byte-identical 还原）vs 上游「让 AI 自己保存配置」的引导式接入
+- 真实生命周期语义（每会话任务、模型、工具计数、中断检测、时长）
+- 完整拟宠化演出（等待抬头看用户、撒花、叹气、哈欠、起床气、用户优先仲裁、隐私优先）——上游敲键直接写 `onKeyDown` 会污染用户优先判定，我们的 `agentStrike` 不碰 `lastAnyKeyAt/strokes`
+
+**R1a 的含义变化**：原计划的「Claude Code 适配器」不必从零做——**把上游 companion 的 `kuro-agent-event` 事件流桥接进我们的 embodiment 状态机**（status: working/waiting/done/error → 相位映射），即可让上游已覆盖的全部客户端立刻获得完整拟宠化演出。工作量从 ~2 周降到 ~2-3 天，且天然解决两套 pill（`.agent-pill` vs `.agent-bubble`）的 UI 并存问题（可考虑统一收敛）。
