@@ -20,6 +20,7 @@ export interface CatContourResolved {
   earShape: CatEarShape;
   earScale: number;
   eyeSquint: number;
+  eyeScale: number;
   bodyChubbiness: number;
 }
 
@@ -79,6 +80,7 @@ export interface CatSkinConfig {
   earShape?: CatEarShape;
   earScale?: number;
   eyeSquint?: number;
+  eyeScale?: number;
   bodyChubbiness?: number;
 
   spots?: CatSpot[];
@@ -175,6 +177,10 @@ export function resolveCatContour(raw?: Partial<CatSkinConfig> | null): CatConto
     typeof raw?.eyeSquint === 'number' && Number.isFinite(raw.eyeSquint)
       ? clampNum(raw.eyeSquint, 0.0, 0.75)
       : 0.0;
+  const eyeScale =
+    typeof raw?.eyeScale === 'number' && Number.isFinite(raw.eyeScale)
+      ? clampNum(raw.eyeScale, 0.72, 1.35)
+      : 1.0;
   const bodyChubbiness =
     typeof raw?.bodyChubbiness === 'number' && Number.isFinite(raw.bodyChubbiness)
       ? clampNum(raw.bodyChubbiness, 0.80, 1.25)
@@ -187,6 +193,7 @@ export function resolveCatContour(raw?: Partial<CatSkinConfig> | null): CatConto
     earShape,
     earScale,
     eyeSquint,
+    eyeScale,
     bodyChubbiness,
   };
 }

@@ -561,6 +561,7 @@ fn cat_skin_properties_schema() -> Value {
         "earShape": { "type": "string", "enum": ["cat", "round", "tall", "small", "wide"], "description": "Ear silhouette: cat, round (tiger/bear/panda), tall (fox/bunny), small (Tibetan fox), wide (fennec)" },
         "earScale": { "type": "number", "minimum": 0.55, "maximum": 1.55, "description": "Ear size multiplier (default 1.0)" },
         "eyeSquint": { "type": "number", "minimum": 0.0, "maximum": 0.75, "description": "Resting upper-eyelid droop for deadpan/cool gaze (e.g. 0.50 for Tibetan fox)" },
+        "eyeScale": { "type": "number", "minimum": 0.72, "maximum": 1.35, "description": "Eye size multiplier (default 1.0); below 1 for a sleek elegant gaze, above 1 for baby-cute big eyes" },
         "bodyChubbiness": { "type": "number", "minimum": 0.80, "maximum": 1.25, "description": "Torso chubbiness multiplier (default 1.0)" },
         "maskColor": { "type": "string" },
         "foreheadBridgeColor": { "type": "string" },

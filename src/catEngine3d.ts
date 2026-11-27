@@ -1488,6 +1488,7 @@ export class KuroCatEngine3D {
       contour.jawSquareness.toFixed(3),
       contour.earShape,
       contour.earScale.toFixed(3),
+      contour.eyeScale.toFixed(3),
       contour.bodyChubbiness.toFixed(3),
     ].join('|');
     if (key === this.lastContourKey) return;
@@ -1593,11 +1594,16 @@ export class KuroCatEngine3D {
     oldEarGeo.dispose();
 
     // Re-conform curved eyes, blush, closed arcs, squint slits, nose, mouth & whiskers onto the new face surface
+    const eyeRx = EYE_MAX_RX * contour.eyeScale;
+    const eyeRy = EYE_MAX_RY * contour.eyeScale;
+    const arcSpan = 0.132 * contour.eyeScale;
+    const arcSag = 0.042 * contour.eyeScale;
+    const slitSag = 0.012 * contour.eyeScale;
     for (const e of this.eyes) {
       const lx = e.s * 0.232;
       const ly = 0.105;
       const oldEye = e.mesh.geometry;
-      e.mesh.geometry = this.makeCurvedFacePatchGeo(lx, ly, EYE_MAX_RX, EYE_MAX_RY, 0.024, 20);
+      e.mesh.geometry = this.makeCurvedFacePatchGeo(lx, ly, eyeRx, eyeRy, 0.024, 20);
       oldEye.dispose();
 
       const oldBlush = e.blush.geometry;
@@ -1613,8 +1619,8 @@ export class KuroCatEngine3D {
 
       e.closedArcTube.update(
         (t, out) => {
-          const x = lx + mix(-0.132, 0.132, t);
-          const y = ly - 0.042 * Math.sin(t * Math.PI);
+          const x = lx + mix(-arcSpan, arcSpan, t);
+          const y = ly - arcSag * Math.sin(t * Math.PI);
           out.set(x, y, this.surfaceZ(x, y) + 0.028);
         },
         (t) => 0.012 + 0.005 * Math.sin(t * Math.PI),
@@ -1622,8 +1628,8 @@ export class KuroCatEngine3D {
 
       e.squintSlitTube.update(
         (t, out) => {
-          const x = lx + mix(-0.132, 0.132, t);
-          const y = ly - 0.012 * Math.sin(t * Math.PI) - e.s * (t - 0.5) * 0.016;
+          const x = lx + mix(-arcSpan, arcSpan, t);
+          const y = ly - slitSag * Math.sin(t * Math.PI) - e.s * (t - 0.5) * 0.016;
           out.set(x, y, this.surfaceZ(x, y) + 0.028);
         },
         (t) => 0.011 + 0.004 * Math.sin(t * Math.PI),

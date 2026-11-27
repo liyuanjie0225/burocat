@@ -139,6 +139,9 @@ pub struct CatSkinConfig {
     // Resting upper-eyelid droop / half-lidded cool gaze (0.0..=0.75; e.g. 0.45 for Tibetan fox)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eye_squint: Option<f64>,
+    // Eye size multiplier (0.72..=1.35, default 1.0; smaller = sleek elegant gaze, bigger = baby-cute)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eye_scale: Option<f64>,
     // Torso chubbiness multiplier (0.80..=1.25, default 1.0)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_chubbiness: Option<f64>,
@@ -227,6 +230,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
         CatSkinConfig {
@@ -277,6 +281,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
         CatSkinConfig {
@@ -327,6 +332,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
         CatSkinConfig {
@@ -377,6 +383,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
         CatSkinConfig {
@@ -427,6 +434,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
         CatSkinConfig {
@@ -477,6 +485,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
         CatSkinConfig {
@@ -527,6 +536,7 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             ear_scale: None,
             eye_squint: None,
             body_chubbiness: None,
+            eye_scale: None,
             spots: vec![],
         },
     ]
@@ -732,6 +742,7 @@ pub fn sanitize_and_validate_cat(cat: &mut CatSkinConfig) -> Result<(), String> 
     cat.ear_scale = cat.ear_scale.map(|v| v.clamp(0.55, 1.55));
     cat.eye_squint = cat.eye_squint.map(|v| v.clamp(0.0, 0.75));
     cat.body_chubbiness = cat.body_chubbiness.map(|v| v.clamp(0.80, 1.25));
+    cat.eye_scale = cat.eye_scale.map(|v| v.clamp(0.72, 1.35));
 
     for (idx, spot) in cat.spots.iter_mut().enumerate() {
         spot.color = spot.color.trim().to_string();
@@ -834,6 +845,7 @@ pub fn cat_schema_guide() -> serde_json::Value {
             },
             "earScale": "Optional ear size multiplier (0.55..1.55, default 1.0)",
             "eyeSquint": "Optional resting upper-eyelid droop (0.0..0.75; e.g. 0.45..0.55 for Tibetan fox deadpan half-lidded gaze, 0.18 for cool tiger)",
+            "eyeScale": "Optional eye size multiplier (0.72..1.35, default 1.0; e.g. 0.85 sleek elegant gaze, 1.2 baby-cute big eyes)",
             "bodyChubbiness": "Optional torso fullness multiplier (0.80..1.25, default 1.0)"
         },
         "spotsGuide": {

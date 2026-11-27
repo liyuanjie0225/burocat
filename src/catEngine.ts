@@ -218,6 +218,14 @@ const BODY_SLICES: Array<{ t: number; hw: number }> = [
   { t: 1.00, hw: 46 }, // cozy bottom rest
 ];
 
+/** `#rrggbb` → `rgba(r,g,b,a)`; returns the input unchanged for anything else. */
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 const IDLE_RENDER_AFTER_MS = 3000;
 const IDLE_RENDER_PAUSE_MS = 40;
 const KEYBOARD_HIT_HALF_WIDTH_RATIO = 0.54;
@@ -4827,10 +4835,19 @@ export class KuroCatEngine {
         // Cheeks / jaw (widest & flattest on square Tibetan fox face)
         mult = hwScale * (1 + jawSq * 0.11) * (isFox ? 0.88 : 1.0);
       } else if (slice.t <= 0.40) {
-        // Neck transition
-        mult = (hwScale * 0.48 + chubby * 0.52) * (1 + jawSq * 0.08) * (isFox ? 0.90 : 1.0);
+        // Neck transition — never let the neck run wider than the chest below it (a slim body must
+        // flare into shoulders, not invert into a head-stuck-on-a-stick silhouette). Oval faces
+        // get a deeper elegant swan-neck pinch so the head articulates off the chest.
+        const neckBlend = hwScale * 0.48 + chubby * 0.52;
+        const neckMult =
+          neckBlend > chubby
+            ? chubby - Math.min(0.06, (neckBlend - chubby) * 0.55)
+            : neckBlend;
+        mult = neckMult * (isOval ? 0.90 : 1.0) * (1 + jawSq * 0.08) * (isFox ? 0.90 : 1.0);
       } else {
-        mult = chubby * (slice.t > 0.45 ? bellySwell : 1);
+        // Shoulders flare a touch wider than the swan-neck on elegant oval faces
+        const shoulderFlare = slice.t <= 0.5 && isOval ? 1.045 : 1.0;
+        mult = chubby * shoulderFlare * (slice.t > 0.45 ? bellySwell : 1);
       }
       const hw = slice.hw * mult;
 
@@ -4953,16 +4970,25 @@ export class KuroCatEngine {
         ctx.shadowColor = s.flankColor;
         ctx.shadowBlur = 0; /* perf: no per-frame blur */
         ctx.beginPath();
-        ctx.ellipse(midTorso.x + purrShift + sgn * 62, midTorso.y + 6, 48, 82, sgn * -0.14, 0, Math.PI * 2);
+        // Pushed down and narrowed: their inner edges used to frame a lighter center
+        // column straight through the neck, which read as a rigid "axis" under the head.
+        ctx.ellipse(midTorso.x + purrShift + sgn * 66, midTorso.y + 18, 44, 74, sgn * -0.14, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
     }
 
     if (s.bellyBibColor) {
-      ctx.fillStyle = s.bellyBibColor;
+      // Feathered top, reaching right up under the jaw shadow: chin -> chest -> belly
+      // becomes ONE continuous cream gradient, so no separate "column" survives between
+      // the head and the bib for the head to appear coated onto.
+      const bibY = chestSp.y + 38;
+      const bibGrad = ctx.createLinearGradient(0, bibY - 84, 0, bibY - 44);
+      bibGrad.addColorStop(0.0, hexToRgba(s.bellyBibColor, 0));
+      bibGrad.addColorStop(1.0, s.bellyBibColor);
+      ctx.fillStyle = bibGrad;
       ctx.beginPath();
-      ctx.ellipse(chestSp.x + purrShift, chestSp.y + 38, 36, 62, 0, 0, Math.PI * 2);
+      ctx.ellipse(chestSp.x + purrShift, bibY, 38, 72, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -5064,7 +5090,9 @@ export class KuroCatEngine {
       ctx.shadowColor = s.maskColor;
       ctx.shadowBlur = 0; /* perf: no per-frame blur */
       ctx.beginPath();
-      ctx.ellipse(maskShift, 3, 42, 27, 0, 0, Math.PI * 2);
+      // rx tracks headWidth and the bottom stops at the jawline (+27) — dipping into the
+      // neck pinch below stacks with the jaw shadow into a dark band that splits the cat
+      ctx.ellipse(maskShift, 2, 42 * hwScale, 25, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     } else if (s.pattern === 'calico') {
@@ -5133,6 +5161,39 @@ export class KuroCatEngine {
     }
 
     ctx.restore(); // end head-space patterns
+
+    // Soft jaw contact shadow, drawn as a BRIDGE: one end anchored to the chin (rotates
+    // with the head), the other to the chest (static spine). A blob pinned to either
+    // space alone detaches on one side whenever the head tilts — head-riding lifts off
+    // the chest, chest-pinned drifts off the chin — and reads as a seam splitting head
+    // from body. Spanning jaw -> chest keeps both ends grounded at every tilt angle.
+    {
+      const jawX = hcx + maskShift * 0.5 + Math.sin(this.headTilt) * -24;
+      const jawY = hcy + Math.cos(this.headTilt) * 24;
+      // The chest anchor reaches into the top of the belly bib, so the falloff also
+      // softens the bib's own hard top edge instead of stopping short of it.
+      const chest = this.spinePoint(0.45, breath);
+      const midX = (jawX + chest.x + purrShift) / 2;
+      const midY = (jawY + chest.y) / 2;
+      const axis = Math.atan2(chest.y - jawY, chest.x + purrShift - jawX);
+      const span = Math.hypot(chest.x + purrShift - jawX, chest.y - jawY);
+      const shRx = 22 * hwScale + 4; // narrow across the neck, never a horizontal band
+      const shRy = span * 0.5 + 14; // along the jaw->chest axis, past both anchors
+      ctx.save();
+      ctx.translate(midX, midY);
+      ctx.rotate(axis);
+      ctx.scale(shRy / shRx, 1); // squash along the axis; gradient circle follows below
+      const shGrad = ctx.createRadialGradient(0, 0, 3, 0, 0, shRx);
+      shGrad.addColorStop(0.0, s.outlineColor || '#3a3430');
+      shGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+      ctx.globalAlpha = 0.18;
+      ctx.fillStyle = shGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, shRx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     ctx.restore(); // end body clip
 
     if (s.outlineColor) {
@@ -5351,6 +5412,9 @@ export class KuroCatEngine {
     for (let idx = 0; idx < 2; idx++) {
       ctx.save();
       ctx.translate(eyeXs[idx], eyeY);
+      // Skin eyeScale: sleek elegant faces shrink the whole gaze (open eyes, lids & slits alike)!
+      const eyeScale = s.contour.eyeScale;
+      if (eyeScale !== 1) ctx.scale(eyeScale, eyeScale);
 
       if (this.privacyClose > 0.45 || this.sleepAmount > 0.52) {
         ctx.strokeStyle = s.squintColor;
