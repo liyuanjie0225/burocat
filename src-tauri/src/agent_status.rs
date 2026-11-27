@@ -3,7 +3,9 @@
 //!
 //! Pipeline: agent hook → `KuroCat --agent-hook <source>` (the entry is written into the
 //! agent's own config by `agent_hooks`) → `POST http://127.0.0.1:27422/agent-event` →
-//! `AgentRegistry` → `kuro-agent-status` event to the webviews.
+//! `AgentRegistry` → `kuro-agent-status` event to the webviews. Hook install state goes
+//! out as `kuro-agent-hooks`: real approval cards report themselves only while the
+//! entries are in place, and the frontend guesses a wait only when they are not.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -57,6 +59,10 @@ pub struct AgentEvent {
     pub tool: String,
     /// On `done`: `interrupted`, or anything else for a normal completion.
     pub outcome: String,
+    /// `guarded` = the agent pauses for approval on changes; only while our hooks are
+    /// absent does the frontend read quiet guarded turns as waiting-on-user
+    /// (see agentStatus.ts).
+    pub permission_mode: String,
 }
 
 impl AgentEvent {
@@ -82,6 +88,7 @@ impl AgentEvent {
         self.message = one_line(&self.message, 300);
         self.tool = one_line(&self.tool, 60);
         self.outcome = slug(&self.outcome, 24);
+        self.permission_mode = slug(&self.permission_mode, 24);
         Some(self)
     }
 
@@ -165,6 +172,10 @@ pub fn hook_payload_to_event(
             .unwrap_or_default()
             .to_string(),
         outcome: outcome.to_string(),
+        permission_mode: text(&value, &["permission_mode", "permissionMode"])
+            .or_else(|| text(&value, &["mode"]))
+            .unwrap_or_default()
+            .to_string(),
     })
 }
 
@@ -193,6 +204,9 @@ pub struct AgentTask {
     /// The tool that has started but not finished yet: a quiet turn with one of
     /// these running is a long command, not a thinking pause.
     pub pending_tool: String,
+    /// The agent's permission mode (`guarded` pauses for approvals): quiet guarded
+    /// turns read as waiting-on-user sooner than unguarded ones.
+    pub permission_mode: String,
     pub started_ms: u64,
     pub last_event_ms: u64,
 }
@@ -261,6 +275,7 @@ fn new_task(event: &AgentEvent, now: u64) -> AgentTask {
         tools: 0,
         last_tool: String::new(),
         pending_tool: String::new(),
+        permission_mode: String::new(),
         started_ms: now,
         last_event_ms: now,
     }
@@ -281,7 +296,12 @@ impl AgentRegistry {
             "info" => {
                 if !event.model.is_empty() {
                     self.forget_one_model();
-                    self.models.insert(id, event.model.clone());
+                    self.models.insert(id.clone(), event.model.clone());
+                }
+                if let Some(task) = self.tasks.get_mut(&id) {
+                    if !event.permission_mode.is_empty() {
+                        task.permission_mode = event.permission_mode.clone();
+                    }
                 }
                 None
             }
@@ -303,6 +323,9 @@ impl AgentRegistry {
                 if !event.model.is_empty() {
                     task.model = event.model.clone();
                 }
+                if !event.permission_mode.is_empty() {
+                    task.permission_mode = event.permission_mode.clone();
+                }
                 None
             }
             "tool" => {
@@ -322,7 +345,10 @@ impl AgentRegistry {
             "tool_start" => {
                 if let Some(task) = self.tasks.get_mut(&id) {
                     // A started tool keeps the turn busy until it reports finished;
-                    // the step count still only counts finished calls.
+                    // the step count still only counts finished calls. It also means
+                    // any approval card was answered — a running tool is not waiting.
+                    task.waiting = false;
+                    task.tool.clear();
                     task.pending_tool = event.tool.clone();
                     task.last_event_ms = now;
                 }
@@ -332,6 +358,9 @@ impl AgentRegistry {
                 let task = self.tasks.entry(id).or_insert_with(|| new_task(event, now));
                 task.waiting = true;
                 task.tool = event.tool.clone();
+                if !event.permission_mode.is_empty() {
+                    task.permission_mode = event.permission_mode.clone();
+                }
                 task.last_event_ms = now;
                 None
             }
@@ -480,6 +509,10 @@ pub fn sync(app: &AppHandle, settings: &AppSettings) {
     if let Err(error) = outcome {
         eprintln!("KuroCat agent hooks: {error}");
     }
+    // Real approval cards report themselves only while our entries are in place, and
+    // only then does the frontend stop guessing a wait from silence — push the fresh
+    // state so a live toggle lands without a pet reload (the seed is get_agent_hook_info).
+    let _ = app.emit("kuro-agent-hooks", agent_hooks::zcode_state(&current_exe()));
 }
 
 #[tauri::command]
@@ -830,6 +863,35 @@ mod tests {
     }
 
     #[test]
+    fn an_approved_card_back_to_work_the_moment_its_tool_starts() {
+        let mut registry = AgentRegistry::default();
+        apply(&mut registry, start(SESSION), 1_000);
+        apply(
+            &mut registry,
+            AgentEvent {
+                tool: "Bash".into(),
+                ..hook_event("permission", SESSION)
+            },
+            2_000,
+        );
+        let (snapshot, _) = apply(
+            &mut registry,
+            AgentEvent {
+                tool: "Bash".into(),
+                ..hook_event("tool_start", SESSION)
+            },
+            3_000,
+        );
+        assert_eq!(snapshot.waiting, 0, "a started tool means the card was answered");
+        assert_eq!(
+            snapshot.tasks[0].tool,
+            "",
+            "the card's tool is only shown while waiting"
+        );
+        assert_eq!(snapshot.tasks[0].pending_tool, "Bash", "the turn is busy running it");
+    }
+
+    #[test]
     fn a_started_tool_keeps_the_turn_busy_without_counting_a_step() {
         let mut registry = AgentRegistry::default();
         apply(&mut registry, start(SESSION), 1_000);
@@ -1033,6 +1095,7 @@ mod tests {
                 session: "sess_1".into(),
                 label: "  修复\n登录 bug  ".into(),
                 model: "glm/GLM-5.4".into(),
+                permission_mode: "guarded".into(),
                 ..AgentEvent::default()
             }
         );
@@ -1057,6 +1120,30 @@ mod tests {
         let permission = r#"{"hook_event_name":"PermissionRequest","session_id":"sess_1","tool_name":"Bash","tool_input":{"command":"npm test"}}"#;
         let event = hook_payload_to_event("zcode", permission, &NO_ENV).expect("event");
         assert_eq!((event.event.as_str(), event.tool.as_str()), ("permission", "Bash"));
+    }
+
+    #[test]
+    fn the_permission_mode_reaches_the_task_and_survives_until_the_next_turn() {
+        let mut registry = AgentRegistry::default();
+        let mut event = start(SESSION);
+        event.permission_mode = "guarded".into();
+        let (snapshot, _) = apply(&mut registry, event, 1_000);
+        assert_eq!(snapshot.tasks[0].permission_mode, "guarded");
+
+        // A later SessionStart (compaction) refreshes it; an empty one keeps the old value.
+        let mut info = hook_event("info", SESSION);
+        info.permission_mode = "default".into();
+        apply(&mut registry, info, 2_000);
+        let id = format!("zcode:{SESSION}");
+        assert_eq!(registry.tasks.get(&id).map(|t| t.permission_mode.as_str()), Some("default"));
+
+        let plain = hook_event("info", SESSION);
+        apply(&mut registry, plain, 3_000);
+        assert_eq!(
+            registry.tasks.get(&id).map(|t| t.permission_mode.as_str()),
+            Some("default"),
+            "events without a mode never wipe a known one"
+        );
     }
 
     #[test]
@@ -1113,6 +1200,7 @@ mod tests {
             message: long,
             tool: "Bash".into(),
             outcome: "Interrupted".into(),
+            permission_mode: "guarded-with-#$%extras".into(),
         }
         .sanitized()
         .expect("usable");
@@ -1123,6 +1211,7 @@ mod tests {
         assert_eq!(event.model.chars().count(), 80);
         assert_eq!(event.message.chars().count(), 300);
         assert_eq!(event.outcome, "Interrupted", "case is kept: it is a value, not an id");
+        assert_eq!(event.permission_mode, "guarded-with-extras");
 
         let unusable = [
             AgentEvent::default(),

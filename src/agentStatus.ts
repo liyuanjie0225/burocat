@@ -18,6 +18,45 @@ import { listen } from '@tauri-apps/api/event';
 export const AGENT_ACTIVE_MS = 3 * 60 * 1000;
 
 /**
+ * Fallback for agents whose config lacks our hooks (auto-install off or install
+ * failed): there a real approval card can never report itself, so a turn that goes
+ * silent this long is probably blocked on the user — shown as a hedged "probably
+ * waiting for you". With our hooks installed a real card always fires PermissionRequest
+ * (verified 2026-11-26 16:50: build-mode Write cards, 2/2 cards → 2/2 events with full
+ * payload), so no guessing happens at all then — a quiet turn is the model thinking or
+ * one long command, and guessing misread exactly that: a guarded turn reasoning past
+ * 20s before its first tool showed "等确认" with no card anywhere (decision D9). The
+ * backend pushes install state on `kuro-agent-hooks`; it seeds this module.
+ */
+export const AGENT_SILENCE_WAITING_MS = 45 * 1000;
+
+/** Without hooks, guarded-mode turns pause for approval on every change, so their
+ * silences are usually a card on screen rather than a long think — the hint comes
+ * sooner for them. Never reached while our hooks are installed: no guessing at all. */
+export const AGENT_GUARDED_SILENCE_WAITING_MS = 20 * 1000;
+
+/** Mirrors the backend's `HookState` (`agent_hooks.rs`), pushed on `kuro-agent-hooks`. */
+export interface AgentHookInfo {
+  detected: boolean;
+  installed: boolean;
+  configPath: string;
+  command: string;
+  events: string[];
+  error: string | null;
+}
+
+/**
+ * Whether our hook entries are in the agent's config and point at the running app. While
+ * they are, a real approval card reports itself via PermissionRequest, so silence is
+ * never guessed into a wait — only real `waiting` events show. Seeded from
+ * `get_agent_hook_info`; kept fresh by `kuro-agent-hooks`.
+ */
+let hooksInstalled = false;
+
+/** Quiet longer than this and the turn is presumed gone (crash without a Stop). */
+const AGENT_STALE_MS = 10 * 60 * 1000;
+
+/**
  * A running turn quiet this long reads as the model thinking: the cat pauses its
  * typing and gazes curious instead. A turn with a started-but-unfinished tool is
  * never thinking — a long command is busy work, not deliberation.
@@ -48,6 +87,8 @@ export interface AgentTask {
   lastTool: string;
   /** The tool started but not finished yet: empty when the model is on its own. */
   pendingTool: string;
+  /** The agent's permission mode (`guarded` pauses for approvals on changes). */
+  permissionMode: string;
   startedMs: number;
   lastEventMs: number;
 }
@@ -87,9 +128,27 @@ export function formatAgentDuration(ms: number): string {
   return minutes > 0 ? `${minutes}m${total % 60}s` : `${total}s`;
 }
 
-/** Turns that count as active right now; the backend lists waiting ones first. */
+/** Turns that count as active right now; the backend lists waiting ones first. Waiting
+ * turns stay visible however long the user takes, quiet ones fade out only when stale. */
 export function activeAgentTasks(snapshot: AgentSnapshot | null, now: number): AgentTask[] {
-  return (snapshot?.tasks ?? []).filter((task) => now - task.lastEventMs < AGENT_ACTIVE_MS);
+  return (snapshot?.tasks ?? []).filter((task) => task.waiting || now - task.lastEventMs < AGENT_STALE_MS);
+}
+
+/** Permission modes where an approval card can ever appear. ZCode's `yolo` (自主模式)
+ * never asks, so its silences can never be a card — they are long tools or thinking. */
+export function agentModeHasCards(permissionMode: string): boolean {
+  return permissionMode !== 'yolo';
+}
+
+/** A running turn that went silent: only where a real card could NOT report itself —
+ * our hooks missing from the agent's config — does silence suggest a hidden card.
+ * Guarded turns pause for approval on every change, so their threshold is shorter. */
+export function agentTaskProbablyWaiting(task: AgentTask, now: number): boolean {
+  if (hooksInstalled) return false;
+  if (!agentModeHasCards(task.permissionMode)) return false;
+  const threshold =
+    task.permissionMode === 'guarded' ? AGENT_GUARDED_SILENCE_WAITING_MS : AGENT_SILENCE_WAITING_MS;
+  return !task.waiting && now - task.lastEventMs >= threshold;
 }
 
 /**
@@ -105,11 +164,17 @@ export function agentTaskThinking(task: AgentTask, now: number): boolean {
 export function agentPillText(tasks: AgentTask[], now: number, width: number): string | null {
   if (tasks.length === 0) return null;
   const narrow = width < 260;
-  const waiting = tasks.filter((task) => task.waiting);
-  if (waiting.length > 0) {
-    if (narrow) return '⏸ 等确认';
-    const running = tasks.length - waiting.length;
-    return `⏸ ${agentSourceLabel(waiting[0].source)} 等你确认${running > 0 ? ` · ${running} 个进行中` : ''}`;
+  const certain = tasks.filter((task) => task.waiting);
+  const probable = tasks.filter((task) => agentTaskProbablyWaiting(task, now));
+  if (certain.length > 0 || probable.length > 0) {
+    // Waiting is the pill's own state (no toast duplicates it); the ticking wait time
+    // doubles as a heartbeat, so a stuck wait never looks like a frozen label.
+    const waited = formatAgentDuration(now - (certain[0] ?? probable[0]).lastEventMs);
+    if (narrow) return `⏸ 等确认 ${waited}`;
+    const verb = certain.length > 0 ? '等你确认' : '可能在等你确认';
+    const running = tasks.length - certain.length - probable.length;
+    const lead = agentSourceLabel((certain[0] ?? probable[0]).source);
+    return `⏸ ${lead} ${verb} · ${waited}${running > 0 ? ` · ${running} 个进行中` : ''}`;
   }
   // The icon follows the freshest running task, the one the cat is acting out.
   const freshest = tasks.reduce((a, b) => (b.lastEventMs >= a.lastEventMs ? b : a));
@@ -141,21 +206,6 @@ export function agentDoneText(done: AgentDone, compact = false): string {
   }
   if (compact || !done.label) return `✅ ${source} 完成${elapsed}`;
   return `✅ ${source}「${clipLabel(done.label)}」完成${elapsed}`;
-}
-
-/** Notice for a turn that just blocked on the user; `null` when none is waiting. */
-export function agentWaitingText(tasks: AgentTask[], compact = false): string | null {
-  let waiting: AgentTask | null = null;
-  for (const task of tasks) {
-    if (task.waiting) {
-      waiting = task;
-      break;
-    }
-  }
-  if (!waiting) return null;
-  const source = agentSourceLabel(waiting.source);
-  if (compact) return `⏸ ${source} 等确认`;
-  return `⏸ ${source} 等你确认${waiting.tool ? ` ${waiting.tool}` : ''}`;
 }
 
 function clipLabel(label: string): string {
@@ -195,6 +245,8 @@ export interface AgentStatusOptions {
    * an update toast can stay for good.
    */
   noticeBottom: () => number | null;
+  /** One-shot announcements (a turn finished or was interrupted). Waiting never
+   * toasts — the pill owns that state, the cat looking up is the ping. */
   showNotice: (text: string) => void;
   /** Small attention cue for the cat (a turn ended, or one is waiting for the user). */
   onAttention: () => void;
@@ -225,37 +277,49 @@ export async function initAgentStatus(options: AgentStatusOptions): Promise<void
   };
 
   const render = (): void => {
-    const tasks = shownAgentTasks(activeAgentTasks(snapshot, Date.now()), answered);
-    const text = options.isEnabled()
-      ? agentPillText(tasks, Date.now(), window.innerWidth)
-      : null;
+    const now = Date.now();
+    const tasks = shownAgentTasks(activeAgentTasks(snapshot, now), answered);
+    const text = options.isEnabled() ? agentPillText(tasks, now, window.innerWidth) : null;
+    // Waiting can arrive two ways: reported by a permission event, or derived here when
+    // a turn goes silent while our hooks are absent (with them a real card always
+    // reports itself). The rising edge is detected in this render — not
+    // only in the event listener — so silence announces itself too. No toast: the pill
+    // already says "waiting" persistently, and a toast would linger after the user
+    // answers, arguing with the pill; the cat looking up is the ping.
+    const waitingNow = tasks.some((task) => task.waiting || agentTaskProbablyWaiting(task, now));
+    if (waitingNow && !wasWaiting && options.isEnabled()) {
+      options.onAttention();
+    }
+    wasWaiting = waitingNow;
     const below = options.noticeBottom();
     const gap = window.innerWidth < 260 ? 4 : NOTICE_GAP;
     pill.textContent = text ?? '';
     pill.classList.toggle('hidden', text === null);
-    pill.classList.toggle('waiting', tasks.some((task) => task.waiting));
+    pill.classList.toggle('waiting', waitingNow);
     pill.style.top = text !== null && below !== null ? `${Math.round(below + gap)}px` : '';
     report();
   };
 
+  // Whether real cards report themselves decides if silence may be guessed as waiting;
+  // the backend re-pushes on every install change (settings toggle, exe switch).
+  const hooks = await invoke<AgentHookInfo>('get_agent_hook_info').catch(() => null);
+  hooksInstalled = hooks?.installed ?? false;
+  await listen<AgentHookInfo>('kuro-agent-hooks', (ev) => {
+    if (hooksInstalled === ev.payload.installed) return;
+    hooksInstalled = ev.payload.installed;
+    render();
+  });
+
   await listen<AgentSnapshot>('kuro-agent-status', (ev) => {
     if (!options.isEnabled()) return;
     snapshot = ev.payload;
-    const compact = window.innerWidth < COMPACT_WIDTH;
-    const tasks = activeAgentTasks(snapshot, Date.now());
-    const waitingNow = tasks.some((task) => task.waiting);
-    let notice: string | undefined;
     if (ev.payload.lastDone) {
-      notice = agentDoneText(ev.payload.lastDone, compact);
+      const notice = agentDoneText(ev.payload.lastDone, window.innerWidth < COMPACT_WIDTH);
+      options.showNotice(notice);
       options.onAttention();
-    } else if (waitingNow && !wasWaiting) {
-      notice = agentWaitingText(tasks, compact) ?? undefined;
-      if (notice) options.onAttention();
+      report(notice);
     }
-    wasWaiting = waitingNow;
-    if (notice) options.showNotice(notice);
     render();
-    report(notice);
   });
 
   await listen<{ kind?: string }>('kuro-input', (ev) => {

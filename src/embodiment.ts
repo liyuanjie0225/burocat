@@ -1,5 +1,10 @@
 import { listen } from '@tauri-apps/api/event';
-import { AgentSnapshot, activeAgentTasks, agentTaskThinking } from './agentStatus';
+import {
+  AgentSnapshot,
+  activeAgentTasks,
+  agentTaskProbablyWaiting,
+  agentTaskThinking,
+} from './agentStatus';
 
 /**
  * Agent embodiment state machine: turns `kuro-agent-status` snapshots into the
@@ -97,13 +102,18 @@ export function initEmbodiment(options: EmbodimentOptions): void {
     // Perform the freshest task; the pill keeps listing all of them.
     const star = shown.reduce((a, b) => (b.lastEventMs >= a.lastEventMs ? b : a));
 
-    working = !star.waiting;
-    thinking = !star.waiting && agentTaskThinking(star, now);
+    // A real card reports itself (PermissionRequest); silence only suggests one where
+    // a card could appear but not report itself — no hooks in the agent's config,
+    // never yolo (see agentStatus.ts). Such a quiet turn is acted out as waiting: the
+    // cat looks up at the user, not the keyboard.
+    const silentWait = agentTaskProbablyWaiting(star, now);
+    working = !star.waiting && !silentWait;
+    thinking = working && agentTaskThinking(star, now);
     toolLabel = working && !thinking ? star.lastTool : '';
-    waiting = star.waiting;
+    waiting = star.waiting || silentWait;
     push();
 
-    if (star.waiting) return;
+    if (waiting) return;
 
     // A long quiet stretch gets a yawn, once per stretch: while thinking the cat
     // waits it out gazing curious, then gives up watching. A turn quiet past
