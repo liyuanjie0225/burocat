@@ -5866,6 +5866,21 @@ pub fn run() {
                     reload_and_emit_all(&http_handle);
                 },
                 move |ev| {
+                    // ZCode status flows exclusively through our real-event pipeline
+                    // (agent_status.rs → kuro-agent-status → pill + embodiment, D9:
+                    // no guessing once hooks are installed). The companion bubble is
+                    // TTL-guess based and fed by set_agent_status / /agent/event calls
+                    // (e.g. a session's model reporting by itself, or another KuroCat
+                    // binary's loopback POST landing on this port) — drop zcode-sourced
+                    // events so there is exactly one source of truth per client.
+                    let is_zcode = ev
+                        .source
+                        .as_deref()
+                        .map(|s| s.eq_ignore_ascii_case("zcode"))
+                        .unwrap_or(false);
+                    if is_zcode {
+                        return;
+                    }
                     let _ = agent_handle.emit("kuro-agent-event", &ev);
                     if let Ok(raw) = serde_json::to_string(&ev) {
                         obs::broadcast_raw("agentEvent", &raw);

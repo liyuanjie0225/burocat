@@ -329,29 +329,30 @@ impl AgentRegistry {
                 None
             }
             "tool" => {
-                if let Some(task) = self.tasks.get_mut(&id) {
-                    // A finished tool also means an earlier prompt was answered.
-                    task.waiting = false;
-                    task.tool.clear();
-                    task.tools = task.tools.saturating_add(1);
-                    task.pending_tool.clear();
-                    if !event.tool.is_empty() {
-                        task.last_tool = event.tool.clone();
-                    }
-                    task.last_event_ms = now;
+                // Tool activity proves a live turn even when the pet never saw its
+                // UserPromptSubmit (pet restarted mid-turn, or the session started
+                // before hooks went in) — track it from what we can see.
+                let task = self.tasks.entry(id.clone()).or_insert_with(|| new_task(event, now));
+                // A finished tool also means an earlier prompt was answered.
+                task.waiting = false;
+                task.tool.clear();
+                task.tools = task.tools.saturating_add(1);
+                task.pending_tool.clear();
+                if !event.tool.is_empty() {
+                    task.last_tool = event.tool.clone();
                 }
+                task.last_event_ms = now;
                 None
             }
             "tool_start" => {
-                if let Some(task) = self.tasks.get_mut(&id) {
-                    // A started tool keeps the turn busy until it reports finished;
-                    // the step count still only counts finished calls. It also means
-                    // any approval card was answered — a running tool is not waiting.
-                    task.waiting = false;
-                    task.tool.clear();
-                    task.pending_tool = event.tool.clone();
-                    task.last_event_ms = now;
-                }
+                let task = self.tasks.entry(id.clone()).or_insert_with(|| new_task(event, now));
+                // A started tool keeps the turn busy until it reports finished;
+                // the step count still only counts finished calls. It also means
+                // any approval card was answered — a running tool is not waiting.
+                task.waiting = false;
+                task.tool.clear();
+                task.pending_tool = event.tool.clone();
+                task.last_event_ms = now;
                 None
             }
             "permission" => {
@@ -892,6 +893,36 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn a_turn_first_seen_mid_tool_is_tracked_from_its_tool_events() {
+        let mut registry = AgentRegistry::default();
+        // The pet restarted mid-turn: UserPromptSubmit went to the dead instance and
+        // only tool events reach this one — the live turn must still reach the pill.
+        let (snapshot, _) = apply(
+            &mut registry,
+            AgentEvent {
+                tool: "Read".into(),
+                ..hook_event("tool_start", SESSION)
+            },
+            1_000,
+        );
+        assert_eq!(snapshot.running, 1, "tool activity alone proves a live turn");
+        assert_eq!(snapshot.tasks[0].pending_tool, "Read");
+        assert_eq!(snapshot.tasks[0].tools, 0, "a started tool is not a step yet");
+
+        let (snapshot, _) = apply(
+            &mut registry,
+            AgentEvent {
+                tool: "Read".into(),
+                ..hook_event("tool", SESSION)
+            },
+            2_000,
+        );
+        assert_eq!(snapshot.tasks[0].tools, 1, "finished tools count");
+        assert_eq!(snapshot.tasks[0].label, "", "no prompt was seen; the label stays empty");
+    }
+
+    #[test]
     fn a_started_tool_keeps_the_turn_busy_without_counting_a_step() {
         let mut registry = AgentRegistry::default();
         apply(&mut registry, start(SESSION), 1_000);
@@ -940,13 +971,21 @@ mod tests {
             assert_eq!(snapshot.tasks[0].started_ms, 1_000, "the clock still starts at the prompt");
             assert_eq!(snapshot.tasks[0].last_event_ms, 1_000 + step * 10_000);
         }
-        // A tool of a turn the pet never saw start cannot invent that turn…
+        // A tool of a turn the pet never saw start still proves a live turn (the pet
+        // restarted mid-turn): it is tracked from what can be seen, alongside the known one.
         let (snapshot, _) = apply(&mut registry, hook_event("tool", "unknown-session"), 200_000);
-        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks.len(), 2);
         assert_eq!(snapshot.tasks[0].id, format!("zcode:{SESSION}"));
+        assert_eq!(snapshot.tasks[1].id, "zcode:unknown-session");
+        assert_eq!(snapshot.tasks[1].tools, 1, "the unseen turn's finished tool counts");
 
         let (snapshot, _) = apply(&mut registry, start(SESSION), 300_000);
-        assert_eq!(snapshot.tasks[0].tools, 0, "a new prompt starts from zero");
+        let resumed = snapshot
+            .tasks
+            .iter()
+            .find(|t| t.id == format!("zcode:{SESSION}"))
+            .expect("the known session is still tracked");
+        assert_eq!(resumed.tools, 0, "a new prompt starts from zero");
     }
 
     #[test]
